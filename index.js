@@ -88,13 +88,10 @@ async function run() {
             const update = {
                 $set: updates,
             };
-            console.log(update);
-            const result = await usersCollection.updateOne(
-                filter,
-                update,
-                options
-            );
-            res.send(result);
+            await usersCollection.updateOne(filter, update, options);
+            res.status(200).send({
+                message: "User updated",
+            });
         });
     } finally {
     }
