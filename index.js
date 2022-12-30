@@ -93,6 +93,17 @@ async function run() {
                 message: "User updated",
             });
         });
+
+        // get user's posts
+        app.get("/posts/:email", async (req, res) => {
+            const { email } = req.params;
+            const sort = { _id: -1 };
+            const posts = await mediaCollection
+                .find({ email })
+                .sort(sort)
+                .toArray();
+            res.send(posts);
+        });
     } finally {
     }
 }
