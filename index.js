@@ -83,12 +83,16 @@ async function run() {
         app.patch("/user/:email", async (req, res) => {
             const email = req.params.email;
             const filter = { email: email };
-            const options = { upsert: true };
-            const updates = req.body;
+            const option = { upsert: true };
             const update = {
-                $set: updates,
+                $set: {
+                    username: req.body.username,
+                    institute: req.body.institute,
+                    address: req.body.address,
+                    isUpdated: true,
+                },
             };
-            await usersCollection.updateOne(filter, update, options);
+            await usersCollection.updateOne(filter, update, option);
             res.status(200).send({
                 message: "User updated",
             });
@@ -102,6 +106,13 @@ async function run() {
                 .find({ email })
                 .sort(sort)
                 .toArray();
+            res.send(posts);
+        });
+
+        // get all posts
+        app.get("/posts", async (req, res) => {
+            const sort = { _id: -1 };
+            const posts = await mediaCollection.find().sort(sort).toArray();
             res.send(posts);
         });
     } finally {
