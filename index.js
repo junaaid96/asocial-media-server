@@ -115,6 +115,22 @@ async function run() {
             const posts = await mediaCollection.find().sort(sort).toArray();
             res.send(posts);
         });
+
+        // update existing post username
+        app.patch("/posts/:email", async (req, res) => {
+            const email = req.params.email;
+            const filter = { email: email };
+            const option = { upsert: true };
+            const update = {
+                $set: {
+                    username: req.body.username,
+                },
+            };
+            await mediaCollection.updateMany(filter, update, option);
+            res.status(200).send({
+                message: "username updated",
+            });
+        });
     } finally {
     }
 }
