@@ -120,13 +120,12 @@ async function run() {
         app.patch("/posts/:email", async (req, res) => {
             const email = req.params.email;
             const filter = { email: email };
-            const option = { upsert: true };
             const update = {
                 $set: {
                     username: req.body.username,
                 },
             };
-            await mediaCollection.updateMany(filter, update, option);
+            await mediaCollection.updateMany(filter, update);
             res.status(200).send({
                 message: "username updated",
             });
