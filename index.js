@@ -130,6 +130,33 @@ async function run() {
                 message: "username updated",
             });
         });
+
+        //edit a post
+        app.patch("/post/:id", async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: ObjectId(id) };
+            const option = { upsert: true };
+            const update = {
+                $set: {
+                    writings: req.body.writings,
+                    isUpdated: true,
+                },
+            };
+            await mediaCollection.updateOne(filter, update, option);
+            res.status(200).send({
+                message: "Post updated",
+            });
+        });
+
+        // delete a post
+        app.delete("/post/:id", async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: ObjectId(id) };
+            await mediaCollection.deleteOne(filter);
+            res.status(200).send({
+                message: "Post deleted",
+            });
+        });
     } finally {
     }
 }
