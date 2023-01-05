@@ -27,6 +27,7 @@ async function run() {
         const db = client.db("aSocial");
         const usersCollection = db.collection("users");
         const mediaCollection = db.collection("media");
+        const commentsCollection = db.collection("comments");
 
         // signup
         app.post("/users", async (req, res) => {
@@ -156,6 +157,30 @@ async function run() {
             res.status(200).send({
                 message: "Post deleted",
             });
+        });
+
+        // add a comment
+        app.post("/comments", async (req, res) => {
+            const { post_id, username, email, comment } = req.body;
+            const newComment = {
+                post_id,
+                username,
+                email,
+                comment,
+            };
+            await commentsCollection.insertOne(newComment);
+            res.status(200).send({
+                message: "Comment added",
+            });
+        });
+
+        // get all comments
+        app.get("/comments/:id", async (req, res) => {
+            const id = req.params.id;
+            const comments = await commentsCollection
+                .find({ post_id: id })
+                .toArray();
+            res.send(comments);
         });
     } finally {
     }
