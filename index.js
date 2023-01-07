@@ -98,14 +98,19 @@ async function run() {
                     isUpdated: true,
                 },
             };
-            // Check if a user with the same username already exists
-            const existingUser = await usersCollection.findOne({
-                username: req.body.username,
-            });
-            if (existingUser) {
-                return res
-                    .status(400)
-                    .send({ error: "Username already exists" });
+            // Find the user with the given email
+            const user = await usersCollection.findOne({ email: email });
+            // Check if the user has actually changed the username
+            if (req.body.username !== user.username) {
+                // Check if a user with the same username already exists
+                const existingUser = await usersCollection.findOne({
+                    username: req.body.username,
+                });
+                if (existingUser) {
+                    return res
+                        .status(400)
+                        .send({ error: "Username already exists" });
+                }
             }
 
             await usersCollection.updateOne(filter, update, option);
