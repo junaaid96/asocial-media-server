@@ -79,6 +79,12 @@ async function run() {
             }
         });
 
+        // get all users
+        app.get("/users", async (req, res) => {
+            const users = await usersCollection.find().toArray();
+            res.send(users);
+        });
+
         //update a user
         app.patch("/user/:email", async (req, res) => {
             const email = req.params.email;
@@ -92,10 +98,18 @@ async function run() {
                     isUpdated: true,
                 },
             };
-            await usersCollection.updateOne(filter, update, option);
-            res.status(200).send({
-                message: "User updated",
+            // Check if a user with the same username already exists
+            const existingUser = await usersCollection.findOne({
+                username: req.body.username,
             });
+            if (existingUser) {
+                return res
+                    .status(400)
+                    .send({ error: "Username already exists" });
+            }
+
+            await usersCollection.updateOne(filter, update, option);
+            res.status(200).send({ message: "User updated" });
         });
 
         // get user's posts
