@@ -22,7 +22,6 @@ const client = new MongoClient(uri, {
 
 async function run() {
     try {
-        await client.connect();
         console.log("Connected correctly to server");
         const db = client.db("aSocial");
         const usersCollection = db.collection("users");
