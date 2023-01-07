@@ -181,6 +181,31 @@ async function run() {
                 .toArray();
             res.send(comments);
         });
+
+        // delete a comment
+        app.delete("/comment/:id", async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: ObjectId(id) };
+            await commentsCollection.deleteOne(filter);
+            res.status(200).send({
+                message: "Comment deleted",
+            });
+        });
+
+        // update existing comment username
+        app.patch("/comments/:email", async (req, res) => {
+            const email = req.params.email;
+            const filter = { email: email };
+            const update = {
+                $set: {
+                    username: req.body.username,
+                },
+            };
+            await commentsCollection.updateMany(filter, update);
+            res.status(200).send({
+                message: "username updated",
+            });
+        });
     } finally {
     }
 }
