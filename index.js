@@ -83,7 +83,7 @@ async function run() {
         });
 
         //get a user by username
-        app.get("/user/:username", async (req, res) => {
+        app.get("/user/username/:username", async (req, res) => {
             const { username } = req.params;
             const user = await usersCollection.findOne({ username });
             if (user) {
