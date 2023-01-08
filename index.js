@@ -69,10 +69,23 @@ async function run() {
             });
         });
 
-        // get a user
+        // get a user by email
         app.get("/user/:email", async (req, res) => {
             const { email } = req.params;
             const user = await usersCollection.findOne({ email });
+            if (user) {
+                res.status(200).send(user);
+            } else {
+                res.status(404).send({
+                    message: "User not found",
+                });
+            }
+        });
+
+        //get a user by username
+        app.get("/user/username/:username", async (req, res) => {
+            const { username } = req.params;
+            const user = await usersCollection.findOne({ username });
             if (user) {
                 res.status(200).send(user);
             } else {
