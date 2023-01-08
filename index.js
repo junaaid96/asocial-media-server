@@ -22,19 +22,22 @@ const client = new MongoClient(uri, {
 
 async function run() {
     try {
-        console.log("Connected correctly to server");
+        console.log("Connected correctly to the server");
         const db = client.db("aSocial");
         const usersCollection = db.collection("users");
         const mediaCollection = db.collection("media");
         const commentsCollection = db.collection("comments");
+        const likesCollection = db.collection("likes");
 
         // signup
         app.post("/users", async (req, res) => {
             const { username, email, institute, address, photo } = req.body;
-            const user = await usersCollection.findOne({ email });
+            const user = await usersCollection.findOne({
+                $or: [{ email }, { username }],
+            });
             if (user) {
                 res.status(400).send({
-                    message: "User already exists",
+                    message: "Username or email already exists",
                 });
             } else {
                 const newUser = {
@@ -223,6 +226,29 @@ async function run() {
             await commentsCollection.updateMany(filter, update);
             res.status(200).send({
                 message: "username updated",
+            });
+        });
+
+        // add a like
+        app.post("/likes", async (req, res) => {
+            const { post_id, email } = req.body;
+            const newLike = {
+                post_id,
+                email,
+            };
+            await likesCollection.insertOne(newLike);
+            res.status(200).send({
+                message: "Like added",
+            });
+        });
+
+        // remove a like
+        app.delete("/like/:id", async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: ObjectId(id) };
+            await likesCollection.deleteOne(filter);
+            res.status(200).send({
+                message: "Like removed",
             });
         });
     } finally {
