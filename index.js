@@ -54,21 +54,6 @@ async function run() {
             }
         });
 
-        //user create a post
-        app.post("/posts", async (req, res) => {
-            const { username, email, writings, photo } = req.body;
-            const newPost = {
-                username,
-                email,
-                writings,
-                photo,
-            };
-            await mediaCollection.insertOne(newPost);
-            res.status(200).send({
-                message: "Post created successfully",
-            });
-        });
-
         // get a user by email
         app.get("/user/:email", async (req, res) => {
             const { email } = req.params;
@@ -174,6 +159,7 @@ async function run() {
             const update = {
                 $set: {
                     writings: req.body.writings,
+                    updatedAt: new Date(),
                     isUpdated: true,
                 },
             };
@@ -201,10 +187,45 @@ async function run() {
                 username,
                 email,
                 comment,
+                createdAt: new Date()
             };
             await commentsCollection.insertOne(newComment);
             res.status(200).send({
                 message: "Comment added",
+            });
+        });
+
+        // Edit a comment
+        app.patch("/comment/:id", async (req, res) => {
+            const id = req.params.id;
+            const { comment } = req.body;
+            const filter = { _id: ObjectId(id) };
+            const option = { upsert: true };
+            const update = {
+                $set: {
+                    comment: comment,
+                    updatedAt: new Date()
+                },
+            };
+            await commentsCollection.updateOne(filter, update, option);
+            res.status(200).send({
+                message: "Comment updated",
+            });
+        });
+
+        //user create a post
+        app.post("/posts", async (req, res) => {
+            const { username, email, writings, photo } = req.body;
+            const newPost = {
+                username,
+                email,
+                writings,
+                photo,
+                createdAt: new Date()
+            };
+            await mediaCollection.insertOne(newPost);
+            res.status(200).send({
+                message: "Post created successfully",
             });
         });
 
@@ -264,7 +285,30 @@ async function run() {
                 message: "Like removed",
             });
         });
+
+        // Get the count of likes for a post
+        app.get("/likes/count/:postId", async (req, res) => {
+            const { postId } = req.params;
+            const count = await likesCollection.countDocuments({ post_id: postId });
+            res.send({ count });
+        });
+        
+        // Check if a user has liked a post
+        app.get("/likes/:postId/:email", async (req, res) => {
+            const { postId, email } = req.params;
+            const like = await likesCollection.findOne({ 
+                post_id: postId, 
+                email: email 
+            });
+            
+            if (like) {
+                res.send({ liked: true, _id: like._id });
+            } else {
+                res.send({ liked: false });
+            }
+        });
     } finally {
+        // Empty finally block
     }
 }
 run().catch(console.log);
