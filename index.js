@@ -307,6 +307,39 @@ async function run() {
                 res.send({ liked: false });
             }
         });
+
+        // Get popular posts based on like count
+        app.get('/posts/popular', async (req, res) => {
+          try {
+            const posts = await mediaCollection
+              .aggregate([
+                {
+                  $lookup: {
+                    from: 'likes',
+                    localField: '_id',
+                    foreignField: 'post_id',
+                    as: 'likes'
+                  }
+                },
+                {
+                  $addFields: {
+                    likesCount: { $size: '$likes' }
+                  }
+                },
+                {
+                  $sort: { likesCount: -1 }
+                },
+                {
+                  $limit: 3
+                }
+              ])
+              .toArray();
+            
+            res.send(posts);
+          } catch (error) {
+            res.status(500).send({ message: error.message });
+          }
+        });
     } finally {
         // Empty finally block
     }
