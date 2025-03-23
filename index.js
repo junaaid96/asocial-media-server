@@ -162,11 +162,33 @@ async function run() {
             res.send(posts);
         });
 
-        // get all posts
+        // get all posts with pagination
         app.get("/posts", async (req, res) => {
-            const sort = { _id: -1 };
-            const posts = await mediaCollection.find().sort(sort).toArray();
-            res.send(posts);
+            try {
+                const page = parseInt(req.query.page) || 1;
+                const limit = parseInt(req.query.limit) || 5;
+                const skip = (page - 1) * limit;
+
+                const totalPosts = await mediaCollection.countDocuments();
+
+                // Sort by createdAt in descending order (-1) to get newest posts first
+                const posts = await mediaCollection
+                    .find({})
+                    .sort({ createdAt: -1, _id: -1 }) // -1 means descending order
+                    .skip(skip)
+                    .limit(limit)
+                    .toArray();
+
+                res.status(200).send({
+                    posts,
+                    totalPages: Math.ceil(totalPosts / limit),
+                    currentPage: page,
+                    totalPosts,
+                });
+            } catch (error) {
+                console.error("Error fetching posts:", error);
+                res.status(500).send({ message: "Error fetching posts" });
+            }
         });
 
         // update existing post username
