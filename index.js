@@ -121,30 +121,51 @@ async function run() {
         // Get popular posts based on like count
         app.get("/posts/popular", async (req, res) => {
             try {
-                const posts = await mediaCollection
+                // First, get post IDs with counts
+                const likeGroups = await likesCollection
                     .aggregate([
                         {
-                            $lookup: {
-                                from: "likes",
-                                localField: "_id",
-                                foreignField: "post_id",
-                                as: "likes",
+                            $group: {
+                                _id: "$post_id",
+                                count: { $sum: 1 },
                             },
                         },
                         {
-                            $addFields: {
-                                likesCount: { $size: "$likes" },
-                            },
-                        },
-                        {
-                            $sort: { likesCount: -1 },
+                            $sort: { count: -1 },
                         },
                         {
                             $limit: 3,
                         },
                     ])
                     .toArray();
-                res.send(posts);
+
+                if (likeGroups.length === 0) {
+                    return res.send([]);
+                }
+
+                // Get the posts with these IDs
+                const postIds = likeGroups.map(
+                    (group) => new ObjectId(group._id)
+                );
+                const posts = await mediaCollection
+                    .find({ _id: { $in: postIds } })
+                    .toArray();
+
+                // Add like counts to posts
+                const postsWithLikes = posts.map((post) => {
+                    const likeGroup = likeGroups.find(
+                        (g) => g._id === post._id.toString()
+                    );
+                    return {
+                        ...post,
+                        likesCount: likeGroup ? likeGroup.count : 0,
+                    };
+                });
+
+                // Sort by likesCount
+                postsWithLikes.sort((a, b) => b.likesCount - a.likesCount);
+
+                res.send(postsWithLikes);
             } catch (error) {
                 console.error("Error in popular posts:", error);
                 res.status(500).send({ message: error.message });
