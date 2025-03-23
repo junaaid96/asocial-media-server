@@ -118,6 +118,39 @@ async function run() {
             res.status(200).send({ message: "User updated" });
         });
 
+        // Get popular posts based on like count
+        app.get("/posts/popular", async (req, res) => {
+            try {
+                const posts = await mediaCollection
+                    .aggregate([
+                        {
+                            $lookup: {
+                                from: "likes",
+                                localField: "_id",
+                                foreignField: "post_id",
+                                as: "likes",
+                            },
+                        },
+                        {
+                            $addFields: {
+                                likesCount: { $size: "$likes" },
+                            },
+                        },
+                        {
+                            $sort: { likesCount: -1 },
+                        },
+                        {
+                            $limit: 3,
+                        },
+                    ])
+                    .toArray();
+                res.send(posts);
+            } catch (error) {
+                console.error("Error in popular posts:", error);
+                res.status(500).send({ message: error.message });
+            }
+        });
+
         // get user's posts
         app.get("/posts/:email", async (req, res) => {
             const { email } = req.params;
@@ -187,7 +220,7 @@ async function run() {
                 username,
                 email,
                 comment,
-                createdAt: new Date()
+                createdAt: new Date(),
             };
             await commentsCollection.insertOne(newComment);
             res.status(200).send({
@@ -204,7 +237,7 @@ async function run() {
             const update = {
                 $set: {
                     comment: comment,
-                    updatedAt: new Date()
+                    updatedAt: new Date(),
                 },
             };
             await commentsCollection.updateOne(filter, update, option);
@@ -221,7 +254,7 @@ async function run() {
                 email,
                 writings,
                 photo,
-                createdAt: new Date()
+                createdAt: new Date(),
             };
             await mediaCollection.insertOne(newPost);
             res.status(200).send({
@@ -289,56 +322,25 @@ async function run() {
         // Get the count of likes for a post
         app.get("/likes/count/:postId", async (req, res) => {
             const { postId } = req.params;
-            const count = await likesCollection.countDocuments({ post_id: postId });
+            const count = await likesCollection.countDocuments({
+                post_id: postId,
+            });
             res.send({ count });
         });
-        
+
         // Check if a user has liked a post
         app.get("/likes/:postId/:email", async (req, res) => {
             const { postId, email } = req.params;
-            const like = await likesCollection.findOne({ 
-                post_id: postId, 
-                email: email 
+            const like = await likesCollection.findOne({
+                post_id: postId,
+                email: email,
             });
-            
+
             if (like) {
                 res.send({ liked: true, _id: like._id });
             } else {
                 res.send({ liked: false });
             }
-        });
-
-        // Get popular posts based on like count
-        app.get('/posts/popular', async (req, res) => {
-          try {
-            const posts = await mediaCollection
-              .aggregate([
-                {
-                  $lookup: {
-                    from: 'likes',
-                    localField: '_id',
-                    foreignField: 'post_id',
-                    as: 'likes'
-                  }
-                },
-                {
-                  $addFields: {
-                    likesCount: { $size: '$likes' }
-                  }
-                },
-                {
-                  $sort: { likesCount: -1 }
-                },
-                {
-                  $limit: 3
-                }
-              ])
-              .toArray();
-            
-            res.send(posts);
-          } catch (error) {
-            res.status(500).send({ message: error.message });
-          }
         });
     } finally {
         // Empty finally block
