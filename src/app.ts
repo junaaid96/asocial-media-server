@@ -1,6 +1,5 @@
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
-import helmet from "helmet";
 import { optionalAuth } from "./auth.js";
 import { env } from "./env.js";
 import { HttpError } from "./lib/http.js";
@@ -16,7 +15,17 @@ const app = express();
 
 app.set("trust proxy", true);
 app.disable("x-powered-by");
-app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+// Security headers for a JSON API (the client is served from its own origin).
+app.use((_req, res, next) => {
+  res.set({
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+    "Cross-Origin-Resource-Policy": "cross-origin",
+  });
+  next();
+});
 
 // Vercel preview/production URLs of the client project are always allowed.
 const CLIENT_DEPLOYMENTS = /^https:\/\/asocial-media-client(-[a-z0-9-]+)?\.vercel\.app$/;
