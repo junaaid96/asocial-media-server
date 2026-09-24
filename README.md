@@ -3,7 +3,7 @@
 The backend for **aSocial**, a calm social space for introverts. It's an Express 5 + TypeScript API on
 **Neon Postgres** and **Neon Object Storage**, deployed as a Vercel Function.
 
-Client: https://github.com/junaaid96/asocial-media-client
+Client: https://github.com/junaaid96/asocial-media-client · Live: https://asocial-media-codejborg.vercel.app
 
 ## What's inside
 
@@ -84,6 +84,6 @@ Set these environment variables in the Vercel project (Production):
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Neon storage credential |
 | `AWS_REGION` | `us-east-2` |
 | `STORAGE_BUCKET` | `asocial-media-uploads` |
-| `CLIENT_ORIGINS` | Comma-separated client origins, e.g. `https://asocial-media-client.vercel.app` |
+| `CLIENT_ORIGINS` | Comma-separated client origins, e.g. `https://asocial-media-codejborg.vercel.app` |
 
 Run schema migrations against Neon with `DATABASE_URL=… npm run db:migrate` before deploying schema changes.
