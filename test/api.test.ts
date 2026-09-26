@@ -60,6 +60,12 @@ describe("aSocial API", () => {
     assert.equal(me.data.user.battery, "full");
   });
 
+  it("reports total registered users", async () => {
+    const res = await call("/stats");
+    assert.equal(res.status, 200);
+    assert.ok(res.data.users >= 2);
+  });
+
   it("validates input", async () => {
     const res = await call("/auth/register", { method: "POST", body: { email: "nope", username: "A!", displayName: "", password: "1" } });
     assert.equal(res.status, 400);

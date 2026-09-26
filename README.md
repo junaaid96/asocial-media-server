@@ -40,6 +40,7 @@ GET    /posts/:id/comments       POST /posts/:id/comments      PATCH/DELETE /com
 GET    /letters?box=inbox|sent   GET  /letters/:id             POST /letters
 GET    /notifications            GET  /notifications/summary   POST /notifications/read
 GET    /search?q=                GET  /prompt                  GET  /health
+GET    /stats                    (total registered users)
 POST   /uploads?kind=avatar|post (raw image body, ≤ 4 MB)       GET  /files/*key
 ```
 

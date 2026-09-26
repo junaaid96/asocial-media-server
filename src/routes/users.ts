@@ -18,6 +18,13 @@ async function findUser(username: string) {
   return user;
 }
 
+// Public community stats for the home page.
+router.get("/stats", async (_req, res) => {
+  const [row] = await db.query<{ users: number }>("SELECT count(*)::int AS users FROM users");
+  res.set("Cache-Control", "public, max-age=60");
+  res.json({ users: row!.users });
+});
+
 // "Kindred spirits": people who write in the same moods you do, and whom you don't follow yet.
 router.get("/users/suggested", requireAuth, async (req, res) => {
   const me = viewer(req);
