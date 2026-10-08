@@ -12,7 +12,7 @@ router.get("/search", async (req, res) => {
   const [people, posts] = await Promise.all([
     db.query<UserRow>(
       `SELECT username, display_name, avatar_key, battery, bio FROM users
-       WHERE username ILIKE $1 OR display_name ILIKE $1
+       WHERE suspended_at IS NULL AND (username ILIKE $1 OR display_name ILIKE $1)
        ORDER BY (username ILIKE $2) DESC, created_at DESC LIMIT 6`,
       [like, `${q.replace(/^@/, "")}%`],
     ),
