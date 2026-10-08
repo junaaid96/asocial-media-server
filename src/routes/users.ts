@@ -1,20 +1,23 @@
 import bcrypt from "bcryptjs";
-import { Router } from "express";
+import { type Request, Router } from "express";
 import { z } from "zod";
 import { requireAuth, viewer } from "../auth.js";
 import { db, one } from "../db.js";
 import { decodeCursor, pageLimit } from "../lib/cursor.js";
 import { HttpError, notFound, param, parse } from "../lib/http.js";
-import { fetchPosts } from "../lib/posts.js";
+import { VISIBLE_TO_VIEWER, fetchPosts } from "../lib/posts.js";
+import { isOnline } from "../realtime.js";
 import { USER_COLUMNS, type UserRow, profileUser, publicUser, selfUser } from "../lib/users.js";
 import { deleteObject, ownsKey } from "../storage.js";
 import { usernameSchema } from "./auth.js";
 
 export const router = Router();
 
-async function findUser(username: string) {
-  const user = await one<UserRow>(`SELECT ${USER_COLUMNS} FROM users WHERE username = $1`, [username.toLowerCase()]);
+/** Finds a profile. Suspended accounts are only visible to themselves and moderators. */
+async function findUser(username: string, req?: Request) {
+  const user = await one<UserRow>(`SELECT ${USER_COLUMNS} FROM users WHERE username = $1`, [username.toLowerCase().replace(/^@/, "")]);
   if (!user) throw notFound("We couldn't find that person");
+  if (user.suspended_at && req?.userId !== user.id && req?.role !== "admin") throw notFound("We couldn't find that person");
   return user;
 }
 
@@ -36,7 +39,7 @@ router.get("/users/suggested", requireAuth, async (req, res) => {
               max(p.created_at) AS last_post
        FROM users u
        LEFT JOIN posts p ON p.author_id = u.id AND NOT p.is_anonymous
-       WHERE u.id <> $1
+       WHERE u.id <> $1 AND u.suspended_at IS NULL
          AND NOT EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $1 AND f.followee_id = u.id)
        GROUP BY u.id
      )
@@ -51,8 +54,25 @@ router.get("/users/suggested", requireAuth, async (req, res) => {
   });
 });
 
+// @mention autocomplete: prefix match on username or display name, people you follow first.
+router.get("/users/lookup", async (req, res) => {
+  const q = String(req.query.q ?? "").trim().replace(/^@/, "").toLowerCase().slice(0, 24);
+  if (!q) return res.json({ items: [] });
+  const prefix = `${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  const rows = await db.query<UserRow>(
+    `SELECT u.username, u.display_name, u.avatar_key, u.battery
+     FROM users u
+     WHERE u.suspended_at IS NULL AND (u.username LIKE $1 OR lower(u.display_name) LIKE $1 OR lower(u.display_name) LIKE '% ' || $1)
+     ORDER BY EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $2::uuid AND f.followee_id = u.id) DESC,
+              (u.username LIKE $1) DESC, length(u.username), u.username
+     LIMIT 6`,
+    [prefix, req.userId ?? null],
+  );
+  res.json({ items: rows.map(publicUser) });
+});
+
 router.get("/users/:username", async (req, res) => {
-  const user = await findUser(param(req, "username"));
+  const user = await findUser(param(req, "username"), req);
   const me = req.userId;
   const [stats] = await db.query<{
     posts: number;
@@ -62,7 +82,9 @@ router.get("/users/:username", async (req, res) => {
     follows_me: boolean;
   }>(
     `SELECT
-       (SELECT count(*)::int FROM posts WHERE author_id = $1 AND (NOT is_anonymous OR author_id = $2::uuid)) AS posts,
+       (SELECT count(*)::int FROM posts p JOIN users u ON u.id = p.author_id
+         WHERE p.author_id = $1 AND (NOT p.is_anonymous OR p.author_id = $2::uuid)
+           AND ${VISIBLE_TO_VIEWER.replaceAll("$1::uuid", "$2::uuid")}) AS posts,
        (SELECT count(*)::int FROM follows WHERE followee_id = $1) AS followers,
        (SELECT count(*)::int FROM follows WHERE follower_id = $1) AS following,
        EXISTS (SELECT 1 FROM follows WHERE follower_id = $2::uuid AND followee_id = $1) AS is_following,
@@ -70,9 +92,15 @@ router.get("/users/:username", async (req, res) => {
     [user.id, me ?? null],
   );
   const isMe = me === user.id;
+  const online = isOnline(user.id);
+  // Same rule as letters: who may start a conversation with this person.
+  const canMessage =
+    !!me && !isMe && !user.suspended_at && (user.letters_from === "everyone" || (user.letters_from === "following" && stats!.follows_me));
   res.json({
-    user: profileUser(user),
+    user: { ...profileUser(user), online, lastSeenAt: online ? null : user.last_seen_at },
     isMe,
+    canMessage,
+    suspended: !!user.suspended_at,
     isFollowing: stats!.is_following,
     followsMe: stats!.follows_me,
     // Follower counts stay private: only you can see your own.
@@ -81,7 +109,7 @@ router.get("/users/:username", async (req, res) => {
 });
 
 router.get("/users/:username/posts", async (req, res) => {
-  const user = await findUser(param(req, "username"));
+  const user = await findUser(param(req, "username"), req);
   const me = req.userId;
   const page = await fetchPosts({
     viewerId: me,
@@ -143,6 +171,7 @@ const updateMeSchema = z
     battery: z.enum(["full", "half", "low", "recharging"]),
     lettersFrom: z.enum(["everyone", "following", "nobody"]),
     showCounts: z.boolean(),
+    dailyLimitMinutes: z.number().int().min(5).max(1440).nullable(),
   })
   .partial();
 
@@ -156,6 +185,7 @@ const COLUMN_FOR = {
   battery: "battery",
   lettersFrom: "letters_from",
   showCounts: "show_counts",
+  dailyLimitMinutes: "daily_limit_minutes",
 } as const;
 
 router.patch("/me", requireAuth, async (req, res) => {
@@ -201,6 +231,48 @@ router.get("/me/moods", requireAuth, async (req, res) => {
     [viewer(req)],
   );
   res.json({ items: rows.map((row) => ({ createdAt: row.created_at, mood: row.mood })) });
+});
+
+// --- Time well spent -------------------------------------------------------------
+// The client reports active, visible time in small heartbeats; totals are kept per local day.
+
+const usageSchema = z.object({
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  seconds: z.number().int().min(1).max(120),
+});
+
+const usageBeats = new Map<string, number>();
+
+router.post("/me/usage", requireAuth, async (req, res) => {
+  const me = viewer(req);
+  const { day, seconds } = parse(usageSchema, req.body);
+  // The client's local day can differ from UTC by up to ±14 hours; anything else is bogus.
+  const offsetDays = Math.abs(Date.parse(`${day}T12:00:00Z`) - Date.now()) / 86_400_000;
+  if (!(offsetDays <= 1.5)) throw new HttpError(400, "That day is out of range");
+  // One heartbeat counts at most once every 20 seconds, so a looping client can't inflate totals.
+  const now = Date.now();
+  if ((usageBeats.get(me) ?? 0) > now) return res.json({ counted: false });
+  usageBeats.set(me, now + 20_000);
+  if (usageBeats.size > 20_000) for (const [k, v] of usageBeats) if (v < now) usageBeats.delete(k);
+  const [row] = await db.query<{ seconds: number }>(
+    `INSERT INTO usage_days (user_id, day, seconds) VALUES ($1, $2, $3)
+     ON CONFLICT (user_id, day) DO UPDATE SET seconds = LEAST(usage_days.seconds + EXCLUDED.seconds, 86400)
+     RETURNING seconds`,
+    [me, day, seconds],
+  );
+  await db.query("UPDATE users SET last_seen_at = now() WHERE id = $1", [me]);
+  res.json({ counted: true, today: row!.seconds });
+});
+
+router.get("/me/usage", requireAuth, async (req, res) => {
+  const me = viewer(req);
+  const rows = await db.query<{ day: string; seconds: number }>(
+    `SELECT to_char(day, 'YYYY-MM-DD') AS day, seconds FROM usage_days
+     WHERE user_id = $1 AND day > (now() - interval '15 days')::date ORDER BY day`,
+    [me],
+  );
+  const [user] = await db.query<{ daily_limit_minutes: number | null }>("SELECT daily_limit_minutes FROM users WHERE id = $1", [me]);
+  res.json({ days: rows, dailyLimitMinutes: user?.daily_limit_minutes ?? null });
 });
 
 router.delete("/me", requireAuth, async (req, res) => {

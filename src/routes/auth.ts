@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import { Router } from "express";
 import { z } from "zod";
-import { requireAuth, signToken, viewer } from "../auth.js";
+import { SUSPENDED_MESSAGE, signToken, viewer } from "../auth.js";
 import { db, one } from "../db.js";
 import { HttpError, parse } from "../lib/http.js";
 import { rateLimit } from "../lib/rate-limit.js";
@@ -55,10 +55,12 @@ router.post("/login", authLimiter, async (req, res) => {
   );
   const ok = user && (await bcrypt.compare(input.password, user.password_hash));
   if (!user || !ok) throw new HttpError(401, "That email/username and password don't match");
+  if (user.suspended_at) throw new HttpError(403, SUSPENDED_MESSAGE);
   res.json({ token: signToken(user.id), user: selfUser(user) });
 });
 
-router.get("/me", requireAuth, async (req, res) => {
+// Works for suspended accounts too, so the client can explain what happened.
+router.get("/me", async (req, res) => {
   const user = await one<UserRow>(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [viewer(req)]);
   if (!user) throw new HttpError(401, "Your session has ended. Please sign in again");
   res.json({ user: selfUser(user) });
