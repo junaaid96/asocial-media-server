@@ -20,6 +20,14 @@ Client: https://github.com/junaaid96/asocial-media-client · Live: https://asoci
 | Search | Postgres full-text search over posts (`tsvector` + GIN) and people |
 | Notifications | Reactions, replies, follows and letters (a letter notifies only once it arrives) |
 | Saved posts, mood garden, account deletion | `/bookmarks`, `/me/moods`, `DELETE /me` |
+| Post privacy | `public` · `followers` · `private` (only me), chosen on create/edit and enforced in every feed, profile, search, single-post, reply, reaction and bookmark endpoint |
+| Rich text | A small Markdown subset (bold, italic, lists, links, inline/fenced code, @mentions, #hashtags). Sanitized on write: HTML tags and non-http(s)/mailto links are stripped |
+| Mentions & hashtags | `@username` notifies people who can see the post (`/users/lookup` powers autocomplete); `#tags` are indexed in `post_tags` and filter feeds with `?tag=` |
+| Reply reactions | Same gentle set as posts, with the same quiet-count rule |
+| Daily prompt history | Answers carry the prompt question; `?promptDate=` and `/prompts/:date` list every answer to a prompt |
+| Chat | 1:1 conversations with history, unread counts, read receipts, typing and presence over a WebSocket at `/ws` (see below) |
+| Reports & moderation | Report a user, post or message with a preset reason; admins review a queue, hide posts and suspend accounts |
+| Time well spent | Clients send short heartbeats of active time; daily totals live in `usage_days`, with an optional daily limit |
 | Uploads | Images are compressed in the browser, checked by magic bytes, and stored in the **private** `asocial-media-uploads` bucket. They're served via `/api/files/*` redirects to presigned URLs, and the redirect is cached at the CDN |
 
 ## API overview
@@ -41,6 +49,17 @@ GET    /letters?box=inbox|sent   GET  /letters/:id             POST /letters
 GET    /notifications            GET  /notifications/summary   POST /notifications/read
 GET    /search?q=                GET  /prompt                  GET  /health
 GET    /stats                    (total registered users)
+GET    /users/lookup?q=          (mention autocomplete)        GET  /tags/trending
+GET    /posts?tag=&promptDate=   GET  /prompts/:date
+PUT    /comments/:id/reaction    DELETE /comments/:id/reaction
+GET    /conversations            POST /conversations {username} GET /conversations/:id
+GET    /conversations/:id/messages?before=|after=<messageId>   POST /conversations/:id/messages {body, clientId}
+POST   /conversations/:id/read   GET  /messages/unread
+POST   /reports {targetType: user|post|message, username|postId|messageId, reason, details}
+POST   /me/usage {day, seconds}  GET  /me/usage
+GET    /admin/stats              GET  /admin/users?q=&status=   POST /admin/users/:id/suspend|unsuspend
+GET    /admin/posts?q=&status=   POST /admin/posts/:id/hide|unhide
+GET    /admin/reports?status=    POST /admin/reports/:id/resolve {action: none|hide_post|suspend_user} | /dismiss
 POST   /uploads?kind=avatar|post (raw image body, ≤ 4 MB)       GET  /files/*key
 ```
 
@@ -50,13 +69,34 @@ POST   /uploads?kind=avatar|post (raw image body, ≤ 4 MB)       GET  /files/*k
 npm install
 cp .env.example .env          # fill in DATABASE_URL, JWT_SECRET, storage credentials
 npm run db:migrate            # applies db/migrations/*.sql
-npm run dev                   # http://localhost:5000
+npm run dev                   # http://localhost:5000 (REST + chat socket at ws://localhost:5000/ws)
 npm run typecheck
 npm test                      # end-to-end API tests (use a disposable database)
 ```
 
 `DATABASE_URL` can point at Neon, or at a local Postgres. Local hosts use a TCP pool; Neon uses the HTTP
 serverless driver.
+
+## Real-time chat
+
+`src/server.ts` serves the API and a WebSocket endpoint at `/ws` from one long-running Node process. Clients
+authenticate with their bearer token in the first message (`{"type":"auth","token":"…"}`), then receive
+`message`, `read`, `typing` and `presence` events. Messages are always written through the REST API, so the
+database stays the source of truth; the socket only pushes updates.
+
+Vercel Functions can't hold WebSocket connections. On Vercel the REST endpoints keep working and the client
+falls back to polling every few seconds. For instant delivery, run `npm start` on a host that supports
+long-lived connections (Render, Fly.io, Railway, a VM) and point the client's `VITE_WS_URL` at it. The hub is
+in-memory, so run a single instance (or add a shared pub/sub before scaling out).
+
+## Admins
+
+There are no built-in admin credentials. Sign up normally, then promote the account:
+
+```bash
+DATABASE_URL=… npm run admin:promote -- <username-or-email>
+DATABASE_URL=… npm run admin:demote  -- <username-or-email>
+```
 
 ## Neon
 
@@ -88,3 +128,5 @@ Set these environment variables in the Vercel project (Production):
 | `CLIENT_ORIGINS` | Comma-separated client origins, e.g. `https://asocial-media-codejborg.vercel.app` |
 
 Run schema migrations against Neon with `DATABASE_URL=… npm run db:migrate` before deploying schema changes.
+`002_chat_privacy_moderation.sql` is additive (new tables, defaulted columns and a widened notification-type
+check), so existing rows keep working: every existing post becomes `public`, every user a regular member.
