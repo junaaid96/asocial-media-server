@@ -1,8 +1,11 @@
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { optionalAuth } from "./auth.js";
-import { env } from "./env.js";
 import { HttpError } from "./lib/http.js";
+import { isAllowedOrigin } from "./origins.js";
+import { router as adminRouter } from "./routes/admin.js";
+import { router as chatRouter } from "./routes/chat.js";
+import { router as reportsRouter } from "./routes/reports.js";
 import { router as authRouter } from "./routes/auth.js";
 import { router as lettersRouter } from "./routes/letters.js";
 import { router as notificationsRouter } from "./routes/notifications.js";
@@ -27,16 +30,10 @@ app.use((_req, res, next) => {
   next();
 });
 
-// Vercel preview/production URLs of the client project are always allowed.
-const CLIENT_DEPLOYMENTS = /^https:\/\/asocial-media-client(-[a-z0-9-]+)?\.vercel\.app$/;
-const LOCALHOST = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
-
 app.use(
   cors({
     origin(origin, callback) {
-      const allowed =
-        !origin || env.clientOrigins.includes(origin) || CLIENT_DEPLOYMENTS.test(origin) || (!env.isProduction && LOCALHOST.test(origin));
-      callback(null, allowed);
+      callback(null, isAllowedOrigin(origin));
     },
     maxAge: 86_400,
   }),
@@ -53,7 +50,8 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.use("/api/auth", authRouter);
-app.use("/api", usersRouter, postsRouter, lettersRouter, notificationsRouter, searchRouter, uploadsRouter);
+app.use("/api/admin", adminRouter);
+app.use("/api", usersRouter, postsRouter, lettersRouter, notificationsRouter, searchRouter, uploadsRouter, chatRouter, reportsRouter);
 
 app.use((_req, _res, next) => next(new HttpError(404, "Not found")));
 
