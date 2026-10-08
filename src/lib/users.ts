@@ -12,11 +12,15 @@ export interface UserRow {
   battery: string;
   letters_from: string;
   show_counts: boolean;
+  role: "user" | "admin";
+  suspended_at: Date | null;
+  daily_limit_minutes: number | null;
+  last_seen_at: Date | null;
   created_at: Date;
 }
 
 export const USER_COLUMNS = `id, email, username, display_name, bio, institute, location, avatar_key,
-  battery, letters_from, show_counts, created_at`;
+  battery, letters_from, show_counts, role, suspended_at, daily_limit_minutes, last_seen_at, created_at`;
 
 export function publicUser(row: Pick<UserRow, "username" | "display_name" | "avatar_key" | "battery">) {
   return {
@@ -45,5 +49,8 @@ export function selfUser(row: UserRow) {
     email: row.email,
     ...profileUser(row),
     showCounts: row.show_counts,
+    role: row.role,
+    suspended: !!row.suspended_at,
+    dailyLimitMinutes: row.daily_limit_minutes,
   };
 }
