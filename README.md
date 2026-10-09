@@ -81,8 +81,7 @@ serverless driver.
 ## Real-time chat
 
 The API serves a WebSocket endpoint at `/ws` next to the REST routes, both locally (`src/server.ts`) and on
-Vercel (`src/index.ts` exports an `http.Server`, which Vercel Functions can upgrade; this needs Fluid compute,
-the default for new projects). Clients authenticate with their bearer token in the first message
+Vercel (`api/index.ts` exports the `http.Server`, which Vercel Functions can upgrade; this needs Fluid compute). Clients authenticate with their bearer token in the first message
 (`{"type":"auth","token":"…"}`), then receive `message`, `read`, `typing`, `presence` and `resync` events.
 Messages are always written through the REST API, so the database stays the source of truth; the socket only
 pushes updates.
@@ -126,9 +125,10 @@ Storage credentials: create a branch credential with the `storage:read` and `sto
 
 ## Deployment (Vercel)
 
-Vercel detects the entrypoint automatically. `src/index.ts` default-exports an `http.Server` wrapping the
-Express app (so it can also accept WebSocket upgrades). `vercel.json` only turns on Fluid compute, which
-WebSockets need (this project predates it being the default).
+`api/index.ts` is the Vercel Function: it default-exports the `http.Server` from `src/index.ts` (the Express app
+plus the WebSocket upgrade handler). `vercel.json` rewrites every path to it, so routes keep their URLs
+(`/api/...`, `/ws`), and turns on Fluid compute, which WebSockets need (this project predates it being the
+default). Vercel's Express preset alone would serve the app as a plain request handler, without upgrades.
 Set these environment variables in the Vercel project (Production):
 
 | Variable | Value |
