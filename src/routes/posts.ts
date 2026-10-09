@@ -98,6 +98,22 @@ router.get("/tags/trending", async (_req, res) => {
   res.json({ items: rows });
 });
 
+// Hashtag autocomplete: tags already used in visible public posts, most used first.
+// Only public posts count, so suggestions never reveal what's in private ones.
+router.get("/tags/lookup", async (req, res) => {
+  const q = String(req.query.q ?? "").trim().replace(/^#/, "").toLowerCase();
+  if (!/^[a-z0-9_]{1,50}$/.test(q)) return void res.json({ items: [] });
+  const rows = await db.query<{ tag: string; posts: number }>(
+    `SELECT t.tag, count(*)::int AS posts
+     FROM post_tags t JOIN posts p ON p.id = t.post_id JOIN users u ON u.id = p.author_id
+     WHERE t.tag LIKE $1 AND p.visibility = 'public' AND p.hidden_at IS NULL AND u.suspended_at IS NULL
+     GROUP BY t.tag ORDER BY (t.tag = $2) DESC, posts DESC, t.tag LIMIT 8`,
+    [`${q.replace(/_/g, "\\_")}%`, q],
+  );
+  res.set("Cache-Control", "public, max-age=60");
+  res.json({ items: rows });
+});
+
 router.get("/posts/:id", async (req, res) => {
   const post = await fetchPost(idParam(req), req.userId, { asModerator: req.role === "admin" && !req.suspended });
   if (!post) throw notFound("This post has drifted away");

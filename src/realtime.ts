@@ -1,12 +1,15 @@
 // Real-time chat events over WebSockets: new messages, read receipts, typing and presence.
 //
-// The hub lives in this process. That fits a single long-running Node server (src/server.ts).
-// Serverless deployments (Vercel Functions) can't hold sockets; there the client falls back
-// to polling the REST API, which stays the source of truth for every message.
+// Each process keeps its own sockets. Events reach sockets on other processes (other Vercel
+// Function instances) through Postgres LISTEN/NOTIFY (see fanout.ts). The REST API stays the
+// source of truth: clients fall back to polling if the socket can't connect, and resync
+// after a reconnect.
 import type { IncomingMessage, Server } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { accountState, verifyToken } from "./auth.js";
 import { db } from "./db.js";
+import { broadcast, configureFanout, ensureListener, listenerHealthy, stopListener } from "./fanout.js";
+import { isRecentlyActive } from "./lib/users.js";
 import { isAllowedOrigin } from "./origins.js";
 
 export type ServerEvent =
@@ -16,6 +19,7 @@ export type ServerEvent =
   | { type: "typing"; conversationId: string; username: string; typing: boolean }
   | { type: "presence"; username: string; online: boolean; lastSeenAt: string | null }
   | { type: "pong" }
+  | { type: "resync" }
   | { type: "error"; message: string };
 
 interface Client {
@@ -24,22 +28,46 @@ interface Client {
   username: string;
   alive: boolean;
   typingBudget: { count: number; resetAt: number };
+  seenAt: number;
 }
 
 const clients = new Map<string, Set<Client>>();
 
-export function isOnline(userId: string): boolean {
-  return (clients.get(userId)?.size ?? 0) > 0;
+/**
+ * Online if they hold a socket on this instance, or were active recently anywhere (socket
+ * heartbeats and the time-tracking heartbeat both refresh last_seen_at).
+ */
+export function isOnline(userId: string, lastSeenAt?: Date | string | null): boolean {
+  return (clients.get(userId)?.size ?? 0) > 0 || isRecentlyActive(lastSeenAt);
 }
 
-/** Sends an event to every open socket of the given users. */
-export function publish(userIds: Iterable<string>, event: ServerEvent) {
+function deliverLocal(userIds: Iterable<string>, event: { type: string }) {
   const payload = JSON.stringify(event);
   for (const userId of new Set(userIds)) {
     for (const client of clients.get(userId) ?? []) {
       if (client.socket.readyState === WebSocket.OPEN) client.socket.send(payload);
     }
   }
+}
+
+/** Sends an event to every open socket of the given users, on this and every other instance. */
+export function publish(userIds: Iterable<string>, event: ServerEvent): Promise<void> {
+  const ids = [...new Set(userIds)];
+  deliverLocal(ids, event);
+  return broadcast(ids, event);
+}
+
+configureFanout({
+  deliver: deliverLocal,
+  // The listener was down for a while: every local socket may have missed something.
+  onReconnect: () => {
+    for (const userId of clients.keys()) deliverLocal([userId], { type: "resync" });
+  },
+});
+
+async function touch(client: Client) {
+  client.seenAt = Date.now();
+  await db.query("UPDATE users SET last_seen_at = now() WHERE id = $1", [client.userId]).catch(() => undefined);
 }
 
 async function conversationPartners(userId: string): Promise<string[]> {
@@ -53,9 +81,9 @@ async function conversationPartners(userId: string): Promise<string[]> {
 
 async function announcePresence(client: Client, online: boolean) {
   const lastSeen = online ? null : new Date().toISOString();
-  if (!online) await db.query("UPDATE users SET last_seen_at = now() WHERE id = $1", [client.userId]).catch(() => undefined);
+  await touch(client);
   const partners = await conversationPartners(client.userId).catch(() => []);
-  publish(partners, { type: "presence", username: client.username, online, lastSeenAt: lastSeen });
+  await publish(partners, { type: "presence", username: client.username, online, lastSeenAt: lastSeen });
 }
 
 // Membership is checked on every typing event; cache it briefly.
@@ -86,6 +114,8 @@ async function handleClientEvent(client: Client, raw: string) {
   }
   if (event.type === "ping") {
     client.socket.send(JSON.stringify({ type: "pong" } satisfies ServerEvent));
+    // Keep presence fresh for people on other instances, at most once a minute.
+    if (Date.now() - client.seenAt > 60_000) await touch(client);
     return;
   }
   if (event.type === "typing" && typeof event.conversationId === "string" && UUID.test(event.conversationId)) {
@@ -94,7 +124,7 @@ async function handleClientEvent(client: Client, raw: string) {
     if (++client.typingBudget.count > 20) return;
     const other = await otherParticipant(event.conversationId, client.userId);
     if (!other) return;
-    publish([other], { type: "typing", conversationId: event.conversationId, username: client.username, typing: event.typing === true });
+    await publish([other], { type: "typing", conversationId: event.conversationId, username: client.username, typing: event.typing === true });
   }
 }
 
@@ -130,13 +160,16 @@ export function attachRealtime(server: Server) {
         const [row] = await db.query<{ username: string }>("SELECT username FROM users WHERE id = $1", [userId]);
         if (!row) return void socket.close(4401, "unauthorized");
         clearTimeout(authTimer);
-        client = { socket, userId, username: row.username, alive: true, typingBudget: { count: 0, resetAt: 0 } };
+        client = { socket, userId, username: row.username, alive: true, typingBudget: { count: 0, resetAt: 0 }, seenAt: 0 };
+        // Hear about events published by other instances before saying we're ready.
+        await ensureListener();
         const set = clients.get(userId) ?? new Set();
         const wasOffline = set.size === 0;
         set.add(client);
         clients.set(userId, set);
         socket.send(JSON.stringify({ type: "ready", userId } satisfies ServerEvent));
         if (wasOffline) await announcePresence(client, true);
+        else await touch(client);
       } catch {
         socket.close(4400, "bad request");
       }
@@ -160,6 +193,8 @@ export function attachRealtime(server: Server) {
 
   // Drop sockets that stop answering pings (sleeping laptops, dead networks).
   const heartbeat = setInterval(() => {
+    // Neon drops idle sessions when it scales to zero; reconnect while anyone is listening.
+    if (clients.size && !listenerHealthy()) void ensureListener();
     for (const set of clients.values()) {
       for (const client of set) {
         if (!client.alive) {
@@ -176,6 +211,7 @@ export function attachRealtime(server: Server) {
   server.on("close", () => {
     clearInterval(heartbeat);
     wss.close();
+    void stopListener();
   });
   return wss;
 }

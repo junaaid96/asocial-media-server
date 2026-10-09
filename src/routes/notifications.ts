@@ -22,12 +22,13 @@ interface NotificationRow {
   post_excerpt: string | null;
   comment_excerpt: string | null;
   reaction: string | null;
+  body: string | null;
 }
 
 router.get("/notifications", async (req, res) => {
   const me = viewer(req);
   const rows = await db.query<NotificationRow>(
-    `SELECT n.id, n.type, n.post_id, n.letter_id, n.comment_id, n.created_at, n.read_at,
+    `SELECT n.id, n.type, n.post_id, n.letter_id, n.comment_id, n.created_at, n.read_at, n.body,
             u.username, u.display_name, u.avatar_key, u.battery,
             p.body AS post_excerpt,
             c.body AS comment_excerpt,
@@ -61,6 +62,8 @@ router.get("/notifications", async (req, res) => {
       commentExcerpt: row.comment_excerpt ? plainExcerpt(row.comment_excerpt, 100) : null,
       letterId: row.letter_id,
       reaction: row.reaction,
+      // System notices (report outcomes, moderation) carry their own text.
+      body: row.body,
     })),
   });
 });

@@ -4,6 +4,7 @@ import { forgetAccountState, requireAdmin, viewer } from "../auth.js";
 import { db, one } from "../db.js";
 import { decodeCursor, encodeCursor, pageLimit } from "../lib/cursor.js";
 import { HttpError, idParam, notFound, parse } from "../lib/http.js";
+import { logAction, notifyAuthor, notifyReporters } from "../lib/moderation.js";
 import { plainExcerpt } from "../lib/richtext.js";
 import { publicUser } from "../lib/users.js";
 
@@ -120,14 +121,17 @@ async function suspendUser(id: string, adminId: string, reason: string) {
 
 router.post("/users/:id/suspend", async (req, res) => {
   const { reason } = parse(reasonSchema, req.body ?? {});
-  await suspendUser(idParam(req), viewer(req), reason);
+  const id = idParam(req);
+  await suspendUser(id, viewer(req), reason);
+  await logAction({ adminId: viewer(req), action: "suspend_user", targetUserId: id, note: reason });
   res.json({ suspended: true });
 });
 
 router.post("/users/:id/unsuspend", async (req, res) => {
   const id = idParam(req);
-  await db.query("UPDATE users SET suspended_at = NULL, suspended_reason = NULL WHERE id = $1", [id]);
+  const rows = await db.query("UPDATE users SET suspended_at = NULL, suspended_reason = NULL WHERE id = $1 AND suspended_at IS NOT NULL RETURNING 1", [id]);
   forgetAccountState(id);
+  if (rows.length) await logAction({ adminId: viewer(req), action: "unsuspend_user", targetUserId: id });
   res.json({ suspended: false });
 });
 
@@ -191,22 +195,33 @@ router.get("/posts", async (req, res) => {
   });
 });
 
-async function hidePost(id: string, reason: string) {
-  const rows = await db.query("UPDATE posts SET hidden_at = coalesce(hidden_at, now()), hidden_reason = $2 WHERE id = $1 RETURNING 1", [
-    id,
-    reason || null,
-  ]);
-  if (!rows.length) throw notFound("That post no longer exists");
+/** Hides a post and tells its author why. Returns the author's id. */
+async function hidePost(id: string, reason: string): Promise<string> {
+  const before = await one<{ author_id: string; hidden: boolean }>("SELECT author_id, hidden_at IS NOT NULL AS hidden FROM posts WHERE id = $1", [id]);
+  if (!before) throw notFound("That post no longer exists");
+  await db.query("UPDATE posts SET hidden_at = coalesce(hidden_at, now()), hidden_reason = $2 WHERE id = $1", [id, reason || null]);
+  if (!before.hidden) await notifyAuthor(id, true, reason);
+  return before.author_id;
 }
 
 router.post("/posts/:id/hide", async (req, res) => {
   const { reason } = parse(reasonSchema, req.body ?? {});
-  await hidePost(idParam(req), reason);
+  const id = idParam(req);
+  const authorId = await hidePost(id, reason);
+  await logAction({ adminId: viewer(req), action: "hide_post", postId: id, targetUserId: authorId, note: reason });
   res.json({ hidden: true });
 });
 
 router.post("/posts/:id/unhide", async (req, res) => {
-  await db.query("UPDATE posts SET hidden_at = NULL, hidden_reason = NULL WHERE id = $1", [idParam(req)]);
+  const id = idParam(req);
+  const [row] = await db.query<{ author_id: string }>(
+    "UPDATE posts SET hidden_at = NULL, hidden_reason = NULL WHERE id = $1 AND hidden_at IS NOT NULL RETURNING author_id",
+    [id],
+  );
+  if (row) {
+    await notifyAuthor(id, false, "");
+    await logAction({ adminId: viewer(req), action: "unhide_post", postId: id, targetUserId: row.author_id });
+  }
   res.json({ hidden: false });
 });
 
@@ -315,21 +330,64 @@ router.post("/reports/:id/resolve", async (req, res) => {
     await suspendUser(report.target_user_id, me, why);
   }
   // Resolving one report also closes other open reports about the same content.
-  await db.query(
+  const closed = await db.query<{ reporter_id: string | null; reason: string; post_id: string | null }>(
     `UPDATE reports SET status = 'resolved', action = $2, resolution_note = $3, resolved_by = $4, resolved_at = now()
-     WHERE status = 'open' AND (id = $1 OR ($5::uuid IS NOT NULL AND post_id = $5::uuid) OR ($6 = 'suspend_user' AND target_user_id = $7::uuid))`,
+     WHERE status = 'open' AND (id = $1 OR ($5::uuid IS NOT NULL AND post_id = $5::uuid) OR ($6 = 'suspend_user' AND target_user_id = $7::uuid))
+     RETURNING reporter_id, reason, post_id`,
     [id, action, note || null, me, action === "hide_post" ? report.post_id : null, action, report.target_user_id],
   );
-  res.json({ status: "resolved", action });
+  await logAction({ adminId: me, action: "resolve_report", reportId: id, postId: report.post_id, targetUserId: report.target_user_id, note: note || null });
+  if (action === "hide_post") await logAction({ adminId: me, action: "hide_post", reportId: id, postId: report.post_id, targetUserId: report.target_user_id, note: why });
+  if (action === "suspend_user") await logAction({ adminId: me, action: "suspend_user", reportId: id, targetUserId: report.target_user_id, note: why });
+  await notifyReporters(closed, action);
+  res.json({ status: "resolved", action, closed: closed.length });
 });
 
 router.post("/reports/:id/dismiss", async (req, res) => {
   const { note } = parse(z.object({ note: z.string().trim().max(1000).default("") }), req.body ?? {});
-  const rows = await db.query(
+  const id = idParam(req);
+  const rows = await db.query<{ reporter_id: string | null; reason: string; post_id: string | null; target_user_id: string | null }>(
     `UPDATE reports SET status = 'dismissed', action = 'none', resolution_note = $2, resolved_by = $3, resolved_at = now()
-     WHERE id = $1 AND status = 'open' RETURNING 1`,
-    [idParam(req), note || null, viewer(req)],
+     WHERE id = $1 AND status = 'open' RETURNING reporter_id, reason, post_id, target_user_id`,
+    [id, note || null, viewer(req)],
   );
   if (!rows.length) throw new HttpError(409, "That report was already handled");
+  await logAction({ adminId: viewer(req), action: "dismiss_report", reportId: id, postId: rows[0]!.post_id, targetUserId: rows[0]!.target_user_id, note });
+  await notifyReporters(rows, "dismissed");
   res.json({ status: "dismissed" });
+});
+
+// --- Audit log ------------------------------------------------------------------
+
+router.get("/actions", async (req, res) => {
+  const limit = pageLimit(req.query.limit, 50, 200);
+  const rows = await db.query<{
+    id: string;
+    action: string;
+    note: string | null;
+    created_at: Date;
+    post_id: string | null;
+    report_id: string | null;
+    admin_username: string | null;
+    target_username: string | null;
+  }>(
+    `SELECT m.id, m.action, m.note, m.created_at, m.post_id, m.report_id, a.username AS admin_username, t.username AS target_username
+     FROM moderation_actions m
+     LEFT JOIN users a ON a.id = m.admin_id
+     LEFT JOIN users t ON t.id = m.target_user_id
+     ORDER BY m.created_at DESC, m.id DESC LIMIT $1`,
+    [limit],
+  );
+  res.json({
+    items: rows.map((row) => ({
+      id: row.id,
+      action: row.action,
+      note: row.note,
+      createdAt: row.created_at,
+      postId: row.post_id,
+      reportId: row.report_id,
+      admin: row.admin_username,
+      target: row.target_username,
+    })),
+  });
 });

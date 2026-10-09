@@ -56,7 +56,7 @@ function canMessage(row: Pick<ConversationRow, "letters_from" | "they_follow_me"
 }
 
 function serializeConversation(row: ConversationRow, me: string) {
-  const online = isOnline(row.other_id);
+  const online = isOnline(row.other_id, row.last_seen_at);
   return {
     id: row.id,
     other: {
@@ -208,7 +208,7 @@ router.post("/conversations/:id/messages", async (req, res) => {
   if (inserted) {
     await db.query("UPDATE conversations SET last_message_at = now() WHERE id = $1", [id]);
     row = await one<MessageRow>(`${MESSAGE_SELECT} WHERE m.id = $1`, [inserted.id]);
-    publish([conversation.user_a, conversation.user_b], { type: "message", conversationId: id, message: serializeMessage(row!) });
+    await publish([conversation.user_a, conversation.user_b], { type: "message", conversationId: id, message: serializeMessage(row!) });
     res.status(201);
   } else {
     row = await one<MessageRow>(`${MESSAGE_SELECT} WHERE m.sender_id = $1 AND m.client_id = $2`, [me, input.clientId]);
@@ -226,7 +226,7 @@ router.post("/conversations/:id/read", async (req, res) => {
   );
   if (rows.length) {
     const [meRow] = await db.query<{ username: string }>("SELECT username FROM users WHERE id = $1", [me]);
-    publish([conversation.other_id], {
+    await publish([conversation.other_id], {
       type: "read",
       conversationId: id,
       readerUsername: meRow!.username,
