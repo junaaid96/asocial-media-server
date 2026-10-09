@@ -25,7 +25,7 @@ Client: https://github.com/junaaid96/asocial-media-client · Live: https://asoci
 | Mentions & hashtags | `@username` notifies people who can see the post (`/users/lookup` powers autocomplete); `#tags` are indexed in `post_tags`, filter feeds with `?tag=`, and `/tags/lookup?q=` suggests tags already used in public posts |
 | Reply reactions | Same gentle set as posts, with the same quiet-count rule |
 | Daily prompt history | Answers carry the prompt question; `?promptDate=` and `/prompts/:date` list every answer to a prompt |
-| Chat | 1:1 conversations with history, unread counts, read receipts, typing and presence over a WebSocket at `/ws` (see below) |
+| Chat | 1:1 conversations with history, unread counts, read receipts, typing and presence delivered over Ably, with a WebSocket at `/ws` and polling as fallbacks (see below) |
 | Reports & moderation | Report a user, post or message with a preset reason; admins review a queue, hide posts and suspend accounts. Reporters hear back when their report is handled, authors are told why a post was hidden (or that it was restored), and every decision lands in an audit log (`/admin/actions`) |
 | Time well spent | Clients send short heartbeats of active time; daily totals live in `usage_days`, with an optional daily limit and an optional session reminder (`sessionReminderMinutes`) |
 | Uploads | Images are compressed in the browser, checked by magic bytes, and stored in the **private** `asocial-media-uploads` bucket. They're served via `/api/files/*` redirects to presigned URLs, and the redirect is cached at the CDN |
@@ -80,7 +80,25 @@ serverless driver.
 
 ## Real-time chat
 
-The API serves a WebSocket endpoint at `/ws` next to the REST routes, both locally (`src/server.ts`) and on
+### Ably (primary)
+
+On Vercel, live chat runs over [Ably](https://ably.com) pub/sub, which suits serverless: Functions write to the
+database, then publish over Ably's REST API (`src/ably.ts`); browsers keep one Ably Realtime connection.
+
+- Set `ABLY_API_KEY` (server only, never sent to clients). Without it, the token endpoint answers 503 and
+  clients use the WebSocket fallback below, then polling.
+- `POST /api/realtime/token` (signed in) returns a signed Ably **token request** (clientId = user id, 1 h TTL;
+  ably-js renews it via `authCallback`) plus the channel names. Capabilities:
+  - `asocial:user:<id>`: `subscribe` only. The user's inbox: `message`, `read` and `typing` events.
+  - `asocial:presence:<id>`: `presence` + `subscribe`. The user enters presence here while the app is open.
+  - `asocial:presence:<partnerId>`: `subscribe`, for up to 200 recent conversation partners, to show them online.
+  Tokens can't publish anywhere, so all events come from the server after the database write.
+- `POST /api/conversations/:id/typing` `{ "typing": true|false }` relays typing (rate-limited) for Ably clients.
+- Publishing never fails a request: if Ably is unreachable the message is still saved and clients catch up.
+
+### WebSocket fallback
+
+The API also serves a WebSocket endpoint at `/ws` next to the REST routes, both locally (`src/server.ts`) and on
 Vercel (`api/index.ts` exports the `http.Server`, which Vercel Functions can upgrade; this needs Fluid compute). Clients authenticate with their bearer token in the first message
 (`{"type":"auth","token":"…"}`), then receive `message`, `read`, `typing`, `presence` and `resync` events.
 Messages are always written through the REST API, so the database stays the source of truth; the socket only
