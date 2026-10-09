@@ -112,7 +112,7 @@ describe("ably token endpoint and publishing", () => {
     assert.equal(cap[inboxChannel(ben.id)], undefined);
     assert.equal(cap[presenceChannel(eve.id)], undefined);
     assert.equal(channels.inbox, inboxChannel(ana.id));
-    assert.deepEqual(channels.partners, [{ userId: ben.id, username: ben.username, presence: presenceChannel(ben.id) }]);
+    assert.deepEqual(channels.partners, [{ userId: ben.id, username: ben.username, conversationId, presence: presenceChannel(ben.id) }]);
   });
 
   it("publishes new messages to both inboxes", async () => {

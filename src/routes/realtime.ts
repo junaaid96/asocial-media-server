@@ -17,8 +17,8 @@ router.use(["/realtime", "/conversations/:id/typing"], requireAuth);
 router.post("/realtime/token", async (req, res) => {
   if (!ablyEnabled()) throw new HttpError(503, "Live updates over Ably aren't configured here");
   const me = viewer(req);
-  const partners = await db.query<{ id: string; username: string }>(
-    `SELECT u.id, u.username FROM conversations c
+  const partners = await db.query<{ id: string; username: string; conversation_id: string }>(
+    `SELECT u.id, u.username, c.id AS conversation_id FROM conversations c
      JOIN users u ON u.id = CASE WHEN c.user_a = $1 THEN c.user_b ELSE c.user_a END
      WHERE c.user_a = $1 OR c.user_b = $1
      ORDER BY coalesce(c.last_message_at, c.created_at) DESC LIMIT 200`,
@@ -34,7 +34,7 @@ router.post("/realtime/token", async (req, res) => {
     channels: {
       inbox: inboxChannel(me),
       presence: presenceChannel(me),
-      partners: partners.map((p) => ({ userId: p.id, username: p.username, presence: presenceChannel(p.id) })),
+      partners: partners.map((p) => ({ userId: p.id, username: p.username, conversationId: p.conversation_id, presence: presenceChannel(p.id) })),
     },
   });
 });
