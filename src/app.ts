@@ -5,6 +5,7 @@ import { HttpError } from "./lib/http.js";
 import { isAllowedOrigin } from "./origins.js";
 import { router as adminRouter } from "./routes/admin.js";
 import { router as chatRouter } from "./routes/chat.js";
+import { router as realtimeRouter } from "./routes/realtime.js";
 import { router as reportsRouter } from "./routes/reports.js";
 import { router as authRouter } from "./routes/auth.js";
 import { router as lettersRouter } from "./routes/letters.js";
@@ -51,7 +52,7 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
-app.use("/api", usersRouter, postsRouter, lettersRouter, notificationsRouter, searchRouter, uploadsRouter, chatRouter, reportsRouter);
+app.use("/api", usersRouter, postsRouter, lettersRouter, notificationsRouter, searchRouter, uploadsRouter, chatRouter, realtimeRouter, reportsRouter);
 
 app.use((_req, _res, next) => next(new HttpError(404, "Not found")));
 

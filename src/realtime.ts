@@ -1,6 +1,8 @@
-// Real-time chat events over WebSockets: new messages, read receipts, typing and presence.
+// Real-time chat events: new messages, read receipts, typing and presence.
 //
-// Each process keeps its own sockets. Events reach sockets on other processes (other Vercel
+// Primary transport: Ably (see ably.ts). publish() sends every event to the users' Ably inboxes.
+// Fallback transport: this WebSocket server, for hosts without Ably configured or clients that
+// can't reach Ably. Each process keeps its own sockets. Events reach sockets on other processes (other Vercel
 // Function instances) through Postgres LISTEN/NOTIFY (see fanout.ts). The REST API stays the
 // source of truth: clients fall back to polling if the socket can't connect, and resync
 // after a reconnect.
@@ -8,6 +10,7 @@ import type { IncomingMessage, Server } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { accountState, verifyToken } from "./auth.js";
 import { db } from "./db.js";
+import { publishToUsers } from "./ably.js";
 import { broadcast, configureFanout, ensureListener, listenerHealthy, stopListener } from "./fanout.js";
 import { isRecentlyActive } from "./lib/users.js";
 import { isAllowedOrigin } from "./origins.js";
@@ -50,11 +53,14 @@ function deliverLocal(userIds: Iterable<string>, event: { type: string }) {
   }
 }
 
-/** Sends an event to every open socket of the given users, on this and every other instance. */
-export function publish(userIds: Iterable<string>, event: ServerEvent): Promise<void> {
+/**
+ * Sends an event to the given users: over Ably when it's configured (the primary path on Vercel),
+ * and to any WebSocket fallback clients on this and every other instance.
+ */
+export async function publish(userIds: Iterable<string>, event: ServerEvent): Promise<void> {
   const ids = [...new Set(userIds)];
   deliverLocal(ids, event);
-  return broadcast(ids, event);
+  await Promise.all([publishToUsers(ids, event), broadcast(ids, event)]);
 }
 
 configureFanout({
@@ -88,7 +94,7 @@ async function announcePresence(client: Client, online: boolean) {
 
 // Membership is checked on every typing event; cache it briefly.
 const membership = new Map<string, { other: string | null; expires: number }>();
-async function otherParticipant(conversationId: string, userId: string): Promise<string | null> {
+export async function otherParticipant(conversationId: string, userId: string): Promise<string | null> {
   const key = `${conversationId}:${userId}`;
   const cached = membership.get(key);
   if (cached && cached.expires > Date.now()) return cached.other;
