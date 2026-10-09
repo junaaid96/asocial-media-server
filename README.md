@@ -158,8 +158,25 @@ Set these environment variables in the Vercel project (Production):
 | `AWS_REGION` | `us-east-2` |
 | `STORAGE_BUCKET` | `asocial-media-uploads` |
 | `CLIENT_ORIGINS` | Comma-separated client origins, e.g. `https://asocial-media-codejborg.vercel.app` |
+| `ABLY_API_KEY` | Ably root key (server only). Enables `POST /api/realtime/token` and Ably publishing; without it chat falls back to `/ws`, then polling |
+| `DATABASE_URL_DIRECT` | Optional. Direct (non-pooled) Neon URL for the `LISTEN` fan-out listener; derived from `DATABASE_URL` if unset |
+| `REALTIME_FANOUT` | Optional. `off` disables cross-instance WebSocket fan-out |
+| `DB_DRIVER` | Optional. `pg` forces the TCP pool (local hosts use it automatically) |
 
-Run schema migrations against Neon with `DATABASE_URL=… npm run db:migrate` before deploying schema changes.
+**Fluid compute** must stay on for the WebSocket fallback: `vercel.json` sets `"fluid": true`. Ably itself
+doesn't need it, since Functions only make REST calls to Ably.
+
+### Migrations
+
+| File | What it adds |
+| --- | --- |
+| `001_init.sql` | Base schema: users, posts, reactions, replies, letters, follows, bookmarks, notifications, search |
+| `002_chat_privacy_moderation.sql` | Post privacy (`visibility`) and hiding, hashtags (`post_tags`), reply reactions (`comment_reactions`), chat (`conversations`, `messages`), `reports`, user roles/suspension/last seen, daily limit and active time (`usage_days`) |
+| `003_moderation_feedback.sql` | `moderation_actions` audit log, session reminders, notification bodies and moderation notification types |
+
+`npm run db:migrate` applies `db/migrations/*.sql` in order and records each file in `schema_migrations`, so
+each one runs once and re-running is safe. Run schema migrations against Neon with
+`DATABASE_URL=… npm run db:migrate` before deploying schema changes.
 `002_chat_privacy_moderation.sql` is additive (new tables, defaulted columns and a widened notification-type
 check), so existing rows keep working: every existing post becomes `public`, every user a regular member.
 `003_moderation_feedback.sql` is additive too (a `moderation_actions` table, `users.session_reminder_minutes`,
