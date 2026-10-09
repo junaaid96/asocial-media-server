@@ -302,7 +302,8 @@ describe("aSocial features", () => {
     const conv = (await call("/conversations", { method: "POST", token: bo.token, body: { username: mod.username } })).data.conversation;
     const msg = (await call(`/conversations/${conv.id}/messages`, { method: "POST", token: bo.token, body: { body: "unkind words" } })).data.message;
     assert.equal((await call("/reports", { method: "POST", token: ada.token, body: { targetType: "message", messageId: msg.id, reason: "harassment" } })).status, 404);
-    assert.equal((await call("/reports", { method: "POST", token: mod.token, body: { targetType: "message", messageId: msg.id, reason: "harassment" } })).status, 201);
+    const messageReport = await call("/reports", { method: "POST", token: mod.token, body: { targetType: "message", messageId: msg.id, reason: "harassment" } });
+    assert.equal(messageReport.status, 201);
 
     // Only admins reach the admin API.
     assert.equal((await call("/admin/stats", { token: ada.token })).status, 403);
@@ -324,7 +325,7 @@ describe("aSocial features", () => {
     const own = await call(`/posts/${post.id}`, { token: cy.token });
     assert.equal(own.data.post.hiddenByModerators, true);
     assert.equal((await call(`/admin/reports/${report.data.id}/dismiss`, { method: "POST", token: mod.token })).status, 409);
-    assert.equal((await call("/admin/posts?status=hidden", { token: mod.token })).data.items[0].id, post.id);
+    assert.ok((await call("/admin/posts?status=hidden", { token: mod.token })).data.items.some((p: { id: string }) => p.id === post.id));
     await call(`/admin/posts/${post.id}/unhide`, { method: "POST", token: mod.token });
     assert.equal((await call(`/posts/${post.id}`, { token: ada.token })).status, 200);
 
@@ -343,8 +344,10 @@ describe("aSocial features", () => {
     await call(`/admin/users/${cy.id}/unsuspend`, { method: "POST", token: mod.token });
     assert.equal((await call("/auth/login", { method: "POST", body: { identifier: cy.username, password: "quiet-password" } })).status, 200);
 
-    const dismissed = (await call("/admin/reports?status=open", { token: mod.token })).data.items[0];
+    const dismissed = (await call("/admin/reports?status=open", { token: mod.token })).data.items.find((r: { id: string }) => r.id === messageReport.data.id);
     assert.equal((await call(`/admin/reports/${dismissed.id}/dismiss`, { method: "POST", token: mod.token, body: { note: "context" } })).status, 200);
-    assert.equal((await call("/admin/reports?status=dismissed", { token: mod.token })).data.items[0].resolvedBy, mod.username);
+    // Other test files share the database, so look the report up by id rather than position.
+    const dismissedList = (await call("/admin/reports?status=dismissed", { token: mod.token })).data.items;
+    assert.equal(dismissedList.find((r: { id: string }) => r.id === dismissed.id).resolvedBy, mod.username);
   });
 });

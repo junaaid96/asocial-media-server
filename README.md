@@ -22,12 +22,12 @@ Client: https://github.com/junaaid96/asocial-media-client · Live: https://asoci
 | Saved posts, mood garden, account deletion | `/bookmarks`, `/me/moods`, `DELETE /me` |
 | Post privacy | `public` · `followers` · `private` (only me), chosen on create/edit and enforced in every feed, profile, search, single-post, reply, reaction and bookmark endpoint |
 | Rich text | A small Markdown subset (bold, italic, lists, links, inline/fenced code, @mentions, #hashtags). Sanitized on write: HTML tags and non-http(s)/mailto links are stripped |
-| Mentions & hashtags | `@username` notifies people who can see the post (`/users/lookup` powers autocomplete); `#tags` are indexed in `post_tags` and filter feeds with `?tag=` |
+| Mentions & hashtags | `@username` notifies people who can see the post (`/users/lookup` powers autocomplete); `#tags` are indexed in `post_tags`, filter feeds with `?tag=`, and `/tags/lookup?q=` suggests tags already used in public posts |
 | Reply reactions | Same gentle set as posts, with the same quiet-count rule |
 | Daily prompt history | Answers carry the prompt question; `?promptDate=` and `/prompts/:date` list every answer to a prompt |
 | Chat | 1:1 conversations with history, unread counts, read receipts, typing and presence over a WebSocket at `/ws` (see below) |
-| Reports & moderation | Report a user, post or message with a preset reason; admins review a queue, hide posts and suspend accounts |
-| Time well spent | Clients send short heartbeats of active time; daily totals live in `usage_days`, with an optional daily limit |
+| Reports & moderation | Report a user, post or message with a preset reason; admins review a queue, hide posts and suspend accounts. Reporters hear back when their report is handled, authors are told why a post was hidden (or that it was restored), and every decision lands in an audit log (`/admin/actions`) |
+| Time well spent | Clients send short heartbeats of active time; daily totals live in `usage_days`, with an optional daily limit and an optional session reminder (`sessionReminderMinutes`) |
 | Uploads | Images are compressed in the browser, checked by magic bytes, and stored in the **private** `asocial-media-uploads` bucket. They're served via `/api/files/*` redirects to presigned URLs, and the redirect is cached at the CDN |
 
 ## API overview
@@ -60,6 +60,7 @@ POST   /me/usage {day, seconds}  GET  /me/usage
 GET    /admin/stats              GET  /admin/users?q=&status=   POST /admin/users/:id/suspend|unsuspend
 GET    /admin/posts?q=&status=   POST /admin/posts/:id/hide|unhide
 GET    /admin/reports?status=    POST /admin/reports/:id/resolve {action: none|hide_post|suspend_user} | /dismiss
+GET    /admin/actions            GET  /tags/lookup?q=
 POST   /uploads?kind=avatar|post (raw image body, ≤ 4 MB)       GET  /files/*key
 ```
 
@@ -79,15 +80,25 @@ serverless driver.
 
 ## Real-time chat
 
-`src/server.ts` serves the API and a WebSocket endpoint at `/ws` from one long-running Node process. Clients
-authenticate with their bearer token in the first message (`{"type":"auth","token":"…"}`), then receive
-`message`, `read`, `typing` and `presence` events. Messages are always written through the REST API, so the
-database stays the source of truth; the socket only pushes updates.
+The API serves a WebSocket endpoint at `/ws` next to the REST routes, both locally (`src/server.ts`) and on
+Vercel (`api/index.ts` exports the `http.Server`, which Vercel Functions can upgrade; this needs Fluid compute). Clients authenticate with their bearer token in the first message
+(`{"type":"auth","token":"…"}`), then receive `message`, `read`, `typing`, `presence` and `resync` events.
+Messages are always written through the REST API, so the database stays the source of truth; the socket only
+pushes updates.
 
-Vercel Functions can't hold WebSocket connections. On Vercel the REST endpoints keep working and the client
-falls back to polling every few seconds. For instant delivery, run `npm start` on a host that supports
-long-lived connections (Render, Fly.io, Railway, a VM) and point the client's `VITE_WS_URL` at it. The hub is
-in-memory, so run a single instance (or add a shared pub/sub before scaling out).
+Each socket is pinned to one process (one Function instance on Vercel), and the request that sends a message
+may run elsewhere. Events therefore fan out through **Postgres `LISTEN`/`NOTIFY`** on the channel
+`asocial_realtime` (`src/fanout.ts`): no extra service. Notes:
+
+- `LISTEN` needs a session, so the listener connects to Neon's direct host (the pooled URL with `-pooler`
+  removed, or `DATABASE_URL_DIRECT` if set). Publishing uses the normal pooled/HTTP driver.
+- Neon closes idle sessions when the compute scales to zero. The listener reconnects on demand and sends local
+  sockets a `resync` event; clients also keep a slow safety poll. Payloads over ~7.5 KB become a `resync` hint
+  (Postgres caps `NOTIFY` at 8000 bytes).
+- Vercel closes WebSockets when a Function reaches its max duration (300 s on Hobby); the client reconnects.
+- Presence is "has a live socket here, or sent a heartbeat in the last 2.5 minutes", so it also works for
+  clients that are polling.
+- Set `REALTIME_FANOUT=off` to disable cross-instance delivery (single long-running server).
 
 ## Admins
 
@@ -114,7 +125,10 @@ Storage credentials: create a branch credential with the `storage:read` and `sto
 
 ## Deployment (Vercel)
 
-Vercel detects Express automatically. `src/index.ts` default-exports the app, so no `vercel.json` is needed.
+`api/index.ts` is the Vercel Function: it default-exports the `http.Server` from `src/index.ts` (the Express app
+plus the WebSocket upgrade handler). `vercel.json` rewrites every path to it, so routes keep their URLs
+(`/api/...`, `/ws`), and turns on Fluid compute, which WebSockets need (this project predates it being the
+default). Vercel's Express preset alone would serve the app as a plain request handler, without upgrades.
 Set these environment variables in the Vercel project (Production):
 
 | Variable | Value |
@@ -130,3 +144,5 @@ Set these environment variables in the Vercel project (Production):
 Run schema migrations against Neon with `DATABASE_URL=… npm run db:migrate` before deploying schema changes.
 `002_chat_privacy_moderation.sql` is additive (new tables, defaulted columns and a widened notification-type
 check), so existing rows keep working: every existing post becomes `public`, every user a regular member.
+`003_moderation_feedback.sql` is additive too (a `moderation_actions` table, `users.session_reminder_minutes`,
+`notifications.body` and two new notification types). Apply it before deploying code that uses it.

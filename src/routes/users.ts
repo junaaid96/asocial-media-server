@@ -92,7 +92,7 @@ router.get("/users/:username", async (req, res) => {
     [user.id, me ?? null],
   );
   const isMe = me === user.id;
-  const online = isOnline(user.id);
+  const online = isOnline(user.id, user.last_seen_at);
   // Same rule as letters: who may start a conversation with this person.
   const canMessage =
     !!me && !isMe && !user.suspended_at && (user.letters_from === "everyone" || (user.letters_from === "following" && stats!.follows_me));
@@ -172,6 +172,7 @@ const updateMeSchema = z
     lettersFrom: z.enum(["everyone", "following", "nobody"]),
     showCounts: z.boolean(),
     dailyLimitMinutes: z.number().int().min(5).max(1440).nullable(),
+    sessionReminderMinutes: z.number().int().min(5).max(240).nullable(),
   })
   .partial();
 
@@ -186,6 +187,7 @@ const COLUMN_FOR = {
   lettersFrom: "letters_from",
   showCounts: "show_counts",
   dailyLimitMinutes: "daily_limit_minutes",
+  sessionReminderMinutes: "session_reminder_minutes",
 } as const;
 
 router.patch("/me", requireAuth, async (req, res) => {
