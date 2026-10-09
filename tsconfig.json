@@ -12,5 +12,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src", "scripts", "test", "neon.ts"]
+  "include": ["src", "api", "scripts", "test", "neon.ts"]
 }

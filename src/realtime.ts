@@ -133,7 +133,8 @@ export function attachRealtime(server: Server) {
 
   server.on("upgrade", (req: IncomingMessage, socket, head) => {
     const url = new URL(req.url ?? "/", "http://localhost");
-    if (url.pathname !== "/ws" || !isAllowedOrigin(req.headers.origin)) {
+    // /ws locally; /api/ws on Vercel (see api/ws.ts).
+    if ((url.pathname !== "/ws" && url.pathname !== "/api/ws") || !isAllowedOrigin(req.headers.origin)) {
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();
       return;
