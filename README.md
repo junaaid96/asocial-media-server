@@ -127,7 +127,8 @@ Storage credentials: create a branch credential with the `storage:read` and `sto
 ## Deployment (Vercel)
 
 Vercel detects the entrypoint automatically. `src/index.ts` default-exports an `http.Server` wrapping the
-Express app (so it can also accept WebSocket upgrades), and no `vercel.json` is needed.
+Express app (so it can also accept WebSocket upgrades). `vercel.json` only turns on Fluid compute, which
+WebSockets need (this project predates it being the default).
 Set these environment variables in the Vercel project (Production):
 
 | Variable | Value |
