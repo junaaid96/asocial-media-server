@@ -32,3 +32,16 @@ describe("rich text", () => {
     assert.equal(plainExcerpt("**Bold** and [a link](https://e.com)\n- item"), "Bold and a link item");
   });
 });
+
+describe("sanitizer keeps writing that isn't HTML", () => {
+  it("keeps zero-width joiners used by emoji and Bangla", () => {
+    for (const text of ["family 👨‍👩‍👧 and 🏳️‍🌈", "র‍্যাব and ক্‌ষ"]) assert.equal(sanitizeRichText(text), text);
+    assert.equal(sanitizeRichText("a\u200Bb\u202Ec"), "abc");
+  });
+
+  it("keeps generics and comparisons, strips real tags", () => {
+    for (const text of ["List<String> and Map<K, V>", "if a<b && c>d then", "vector<int> v; 1<2 and 3>2 <3"]) assert.equal(sanitizeRichText(text), text);
+    assert.equal(sanitizeRichText("<b>bold</b> <Script>x</sCRIPT> <img src=x onerror=alert(1)><svg/onload=alert(1)><br/>"), "bold x");
+    assert.equal(sanitizeRichText("<div\nclass='x'>t</div>"), "t");
+  });
+});
