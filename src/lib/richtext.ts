@@ -3,10 +3,18 @@
 // @mentions and #hashtags. Clients render it into elements (never raw HTML), and the
 // server sanitizes on write so stored text stays safe for any other consumer too.
 
-const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g;
+// Control and bidi-override characters. Zero-width joiner/non-joiner (U+200C/U+200D) stay: emoji
+// sequences (👨‍👩‍👧) and Bangla/Indic spellings (র‍্যাব) depend on them.
+const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
 const HTML_COMMENT = /<!--[\s\S]*?(-->|$)/g;
-// Anything that looks like an HTML tag. "<3" and "a < b" don't match (a letter or "/" must follow "<").
-const HTML_TAG = /<\/?[a-zA-Z][a-zA-Z0-9-]*(\s[^<>]*)?\/?>/g;
+// Real HTML tags only: a known element name and well-formed attributes. Writing like "List<String>",
+// "a<b && c>d" or "<3" isn't HTML and stays as written (clients never render stored text as HTML).
+const HTML_ELEMENTS =
+  "a|abbr|address|area|article|aside|audio|b|base|bdi|bdo|blockquote|body|br|button|canvas|caption|cite|code|col|colgroup|data|datalist|dd|del|details|dfn|dialog|div|dl|dt|em|embed|fieldset|figcaption|figure|font|footer|form|frame|frameset|h[1-6]|head|header|hr|html|i|iframe|img|input|ins|kbd|label|legend|li|link|main|map|mark|marquee|math|menu|meta|meter|nav|noscript|object|ol|optgroup|option|output|p|param|picture|pre|progress|q|rp|rt|ruby|s|samp|script|section|select|slot|small|source|span|strong|style|sub|summary|sup|svg|table|tbody|td|template|textarea|tfoot|th|thead|time|title|tr|track|u|ul|var|video|wbr|xml|xmp";
+const HTML_TAG = new RegExp(
+  `<\\/?(?:${HTML_ELEMENTS})(?=[\\s/>])(?:[\\s/]+[a-zA-Z_:][-\\w:.]*(?:\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s"'=<>\`]+))?)*[\\s/]*>`,
+  "gi",
+);
 // The URL may contain one level of balanced parentheses, e.g. Wikipedia links.
 const MD_LINK = /\[([^\]\n]{1,200})\]\(((?:[^()\s]|\([^()\s]*\)){1,2048})\)/g;
 const SAFE_URL = /^(https?:\/\/|mailto:)/i;
@@ -77,6 +85,7 @@ export function plainExcerpt(text: string, max = 140): string {
     .replace(MD_LINK, "$1")
     .replace(/(\*\*|__|`)/g, "")
     .replace(/(^|\s)[_*](\S[^_*\n]*\S|\S)[_*](?=\s|$|[.,!?])/g, "$1$2")
+    .replace(/\*(?=\S)([^*\n]+?)(?<=\S)\*/g, "$1")
     .replace(/^\s*([-*]|\d+\.)\s+/gm, "")
     .replace(/\s+/g, " ")
     .trim();
