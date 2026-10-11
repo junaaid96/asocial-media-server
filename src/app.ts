@@ -13,6 +13,7 @@ import { router as notificationsRouter } from "./routes/notifications.js";
 import { router as postsRouter } from "./routes/posts.js";
 import { router as searchRouter } from "./routes/search.js";
 import { router as uploadsRouter } from "./routes/uploads.js";
+import { demoGuard } from "./lib/demo.js";
 import { router as usersRouter } from "./routes/users.js";
 
 const app = express();
@@ -41,6 +42,7 @@ app.use(
 );
 app.use(express.json({ limit: "100kb" }));
 app.use(optionalAuth);
+app.use(demoGuard);
 
 app.get(["/", "/api"], (_req, res) => {
   res.json({ name: "aSocial API", status: "calm", docs: "https://github.com/junaaid96/asocial-media-server" });

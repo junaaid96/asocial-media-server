@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
     "test": "tsx --env-file-if-exists=.env --test test/*.test.ts",
+    "db:seed-demo": "tsx --env-file-if-exists=.env scripts/seed-demo.ts",
     "admin:promote": "tsx --env-file-if-exists=.env scripts/set-role.ts promote",
     "admin:demote": "tsx --env-file-if-exists=.env scripts/set-role.ts demote"
   },
