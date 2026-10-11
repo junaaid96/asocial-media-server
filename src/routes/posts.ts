@@ -311,8 +311,7 @@ function serializeComment(row: CommentRow, me: string | undefined) {
     isOriginalPoster,
     author: hide ? null : publicUser(row),
     myReaction: row.my_reaction,
-    // Same quiet-count rule as posts. An anonymous author's opt-in isn't applied, so it can't identify them.
-    ...visibleCounts(row.reaction_counts, isMine || (row.show_counts && !hide)),
+    ...visibleCounts(row.reaction_counts),
   };
 }
 

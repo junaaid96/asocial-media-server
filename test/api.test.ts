@@ -91,7 +91,8 @@ describe("aSocial API", () => {
     const react = await call(`/posts/${postId}/reaction`, { method: "PUT", token: bo.token, body: { kind: "hug" } });
     assert.equal(react.status, 200);
     assert.equal(react.data.post.myReaction, "hug");
-    assert.equal(react.data.post.reactionCounts, null, "counts are hidden from non-authors");
+    assert.deepEqual(react.data.post.reactionCounts, { hug: 1 }, "counts are shown to every viewer");
+    assert.equal(react.data.post.reactionTotal, 1);
 
     const own = await call(`/posts/${postId}`, { token: ada.token });
     assert.deepEqual(own.data.post.reactionCounts, { hug: 1 });

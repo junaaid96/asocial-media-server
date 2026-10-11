@@ -73,8 +73,8 @@ const postSelect = (extraColumns = "") => `
   FROM posts p
   JOIN users u ON u.id = p.author_id`;
 
-/** Quiet counts: totals are only visible to the author unless they opt in. */
-export function visibleCounts(counts: Record<string, number> | null | undefined, canSee: boolean) {
+/** Reaction totals and the per-reaction breakdown, shown to everyone who can see the post or reply. */
+export function visibleCounts(counts: Record<string, number> | null | undefined, canSee = true) {
   const safe = counts ?? {};
   return {
     reactionCounts: canSee ? safe : null,
@@ -117,7 +117,7 @@ export function serializePost(row: PostRow, viewerId: string | undefined) {
     myReaction: row.my_reaction,
     bookmarked: row.bookmarked,
     commentCount: row.comment_count,
-    ...visibleCounts(row.reaction_counts, isMine || row.show_counts),
+    ...visibleCounts(row.reaction_counts),
   };
 }
 
