@@ -177,13 +177,13 @@ describe("aSocial features", () => {
     assert.equal((await call("/posts?promptDate=nope")).status, 400);
   });
 
-  it("reacts to replies with quiet counts", async () => {
+  it("reacts to replies with counts everyone can see", async () => {
     const post = (await call("/posts", { method: "POST", token: ada.token, body: { body: "reply to me" } })).data.post;
     const comment = (await call(`/posts/${post.id}/comments`, { method: "POST", token: bo.token, body: { body: `_thanks_ @${ada.username}` } })).data.comment;
     const reacted = await call(`/comments/${comment.id}/reaction`, { method: "PUT", token: ada.token, body: { kind: "insight" } });
     assert.equal(reacted.status, 200);
     assert.equal(reacted.data.comment.myReaction, "insight");
-    assert.equal(reacted.data.comment.reactionCounts, null, "quiet counts hide totals from non-authors");
+    assert.deepEqual(reacted.data.comment.reactionCounts, { insight: 1 }, "counts are shown to every viewer");
     await call(`/comments/${comment.id}/reaction`, { method: "PUT", token: cy.token, body: { kind: "hug" } });
     const asAuthor = (await call(`/posts/${post.id}/comments`, { token: bo.token })).data.items[0];
     assert.deepEqual(asAuthor.reactionCounts, { insight: 1, hug: 1 });

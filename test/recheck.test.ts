@@ -213,3 +213,29 @@ describe("post privacy is visible to every viewer", () => {
     assert.equal(found?.visibility, "public");
   });
 });
+
+describe("reaction counts are visible to every viewer", () => {
+  it("returns totals and breakdowns to strangers, signed-out viewers and on replies", async () => {
+    const author = await register("rca");
+    const fan = await register("rcf");
+    const stranger = await register("rcs");
+    const post = (await call("/posts", { method: "POST", token: author.token, body: { body: `count me ${suffix}`, visibility: "public" } })).data.post;
+    await call(`/posts/${post.id}/reaction`, { method: "PUT", token: fan.token, body: { kind: "hug" } });
+    await call(`/posts/${post.id}/reaction`, { method: "PUT", token: stranger.token, body: { kind: "felt" } });
+    for (const token of [stranger.token, undefined]) {
+      const seen = (await call(`/posts/${post.id}`, { token })).data.post;
+      assert.equal(seen.reactionTotal, 2);
+      assert.deepEqual(seen.reactionCounts, { hug: 1, felt: 1 });
+    }
+    const listed = (await call(`/users/${author.username}/posts`, { token: stranger.token })).data.items.find((p: { id: string }) => p.id === post.id);
+    assert.equal(listed.reactionTotal, 2);
+    const anon = (await call("/posts", { method: "POST", token: author.token, body: { body: "anon counts", isAnonymous: true } })).data.post;
+    await call(`/posts/${anon.id}/reaction`, { method: "PUT", token: fan.token, body: { kind: "insight" } });
+    assert.equal((await call(`/posts/${anon.id}`, { token: stranger.token })).data.post.reactionTotal, 1);
+    const comment = (await call(`/posts/${post.id}/comments`, { method: "POST", token: fan.token, body: { body: "nice" } })).data.comment;
+    await call(`/comments/${comment.id}/reaction`, { method: "PUT", token: author.token, body: { kind: "relate" } });
+    const c = (await call(`/posts/${post.id}/comments`, { token: stranger.token })).data.items.find((x: { id: string }) => x.id === comment.id);
+    assert.equal(c.reactionTotal, 1);
+    assert.deepEqual(c.reactionCounts, { relate: 1 });
+  });
+});
