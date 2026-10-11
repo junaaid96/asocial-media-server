@@ -190,3 +190,26 @@ describe("re-check features", () => {
     assert.equal((await call("/admin/actions", { token: ada.token })).status, 403);
   });
 });
+
+describe("post privacy is visible to every viewer", () => {
+  it("returns visibility to non-authors on feed, single post, profile and search", async () => {
+    const author = await register("pva");
+    const follower = await register("pvf");
+    const stranger = await register("pvs");
+    await call(`/users/${author.username}/follow`, { method: "POST", token: follower.token });
+    const word = `privacycheck${suffix}`;
+    const pub = (await call("/posts", { method: "POST", token: author.token, body: { body: `public ${word}`, visibility: "public" } })).data.post;
+    const fol = (await call("/posts", { method: "POST", token: author.token, body: { body: `followers ${word}`, visibility: "followers" } })).data.post;
+
+    assert.equal((await call(`/posts/${fol.id}`, { token: follower.token })).data.post.visibility, "followers");
+    assert.equal((await call(`/posts/${pub.id}`, { token: stranger.token })).data.post.visibility, "public");
+    assert.equal((await call(`/posts/${pub.id}`)).data.post.visibility, "public");
+    const profile = (await call(`/users/${author.username}/posts`, { token: follower.token })).data.items;
+    assert.deepEqual(new Set(profile.map((p: { visibility: string }) => p.visibility)), new Set(["public", "followers"]));
+    const feed = (await call("/posts", { token: follower.token })).data.items;
+    assert.equal(feed.find((p: { id: string }) => p.id === fol.id)?.visibility, "followers");
+    const search = (await call(`/search?q=${word}`, { token: stranger.token })).data;
+    const found = (search.posts ?? search.items ?? []).find((p: { id: string }) => p.id === pub.id);
+    assert.equal(found?.visibility, "public");
+  });
+});
