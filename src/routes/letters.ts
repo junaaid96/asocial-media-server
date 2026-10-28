@@ -28,16 +28,24 @@ interface LetterRow {
   s_display_name: string;
   s_avatar_key: string | null;
   s_battery: string;
+  s_verified_at: Date | null;
+  s_verified_label: string | null;
+  s_role: "user" | "admin";
   r_username: string;
   r_display_name: string;
   r_avatar_key: string | null;
   r_battery: string;
+  r_verified_at: Date | null;
+  r_verified_label: string | null;
+  r_role: "user" | "admin";
   reply_excerpt: string | null;
 }
 
 const LETTER_SELECT = `
   SELECT l.*, s.username AS s_username, s.display_name AS s_display_name, s.avatar_key AS s_avatar_key, s.battery AS s_battery,
+         s.verified_at AS s_verified_at, s.verified_label AS s_verified_label, s.role AS s_role,
          r.username AS r_username, r.display_name AS r_display_name, r.avatar_key AS r_avatar_key, r.battery AS r_battery,
+         r.verified_at AS r_verified_at, r.verified_label AS r_verified_label, r.role AS r_role,
          left(parent.body, 140) AS reply_excerpt
   FROM letters l
   JOIN users s ON s.id = l.sender_id
@@ -49,8 +57,24 @@ function serializeLetter(row: LetterRow, me: string, full: boolean) {
   return {
     id: row.id,
     direction: row.sender_id === me ? "sent" : "received",
-    from: publicUser({ username: row.s_username, display_name: row.s_display_name, avatar_key: row.s_avatar_key, battery: row.s_battery }),
-    to: publicUser({ username: row.r_username, display_name: row.r_display_name, avatar_key: row.r_avatar_key, battery: row.r_battery }),
+    from: publicUser({
+      username: row.s_username,
+      display_name: row.s_display_name,
+      avatar_key: row.s_avatar_key,
+      battery: row.s_battery,
+      verified_at: row.s_verified_at,
+      verified_label: row.s_verified_label,
+      role: row.s_role,
+    }),
+    to: publicUser({
+      username: row.r_username,
+      display_name: row.r_display_name,
+      avatar_key: row.r_avatar_key,
+      battery: row.r_battery,
+      verified_at: row.r_verified_at,
+      verified_label: row.r_verified_label,
+      role: row.r_role,
+    }),
     body: full ? row.body : row.body.slice(0, 160),
     replyTo: row.reply_to ? { id: row.reply_to, excerpt: row.reply_excerpt } : null,
     sentAt: row.created_at,

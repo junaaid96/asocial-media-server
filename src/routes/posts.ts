@@ -290,6 +290,9 @@ interface CommentRow {
   display_name: string;
   avatar_key: string | null;
   battery: string;
+  verified_at: Date | null;
+  verified_label: string | null;
+  role: "user" | "admin";
   show_counts: boolean;
   post_author_id: string;
   post_is_anonymous: boolean;
@@ -317,7 +320,7 @@ function serializeComment(row: CommentRow, me: string | undefined) {
 
 const COMMENT_SELECT = `
   SELECT c.id, c.post_id, c.author_id, c.body, c.created_at, c.edited_at,
-         u.username, u.display_name, u.avatar_key, u.battery, u.show_counts,
+         u.username, u.display_name, u.avatar_key, u.battery, u.verified_at, u.verified_label, u.role, u.show_counts,
          p.author_id AS post_author_id, p.is_anonymous AS post_is_anonymous,
          (SELECT cr.kind FROM comment_reactions cr WHERE cr.comment_id = c.id AND cr.user_id = $1::uuid) AS my_reaction,
          (SELECT coalesce(jsonb_object_agg(s.kind, s.n), '{}'::jsonb)

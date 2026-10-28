@@ -7,7 +7,7 @@ import { decodeCursor, pageLimit } from "../lib/cursor.js";
 import { HttpError, notFound, param, parse } from "../lib/http.js";
 import { VISIBLE_TO_VIEWER, fetchPosts } from "../lib/posts.js";
 import { isOnline } from "../realtime.js";
-import { USER_COLUMNS, type UserRow, profileUser, publicUser, selfUser } from "../lib/users.js";
+import { USER_COLUMNS, type UserRow, fetchRelationship, profileUser, publicUser, selfUser } from "../lib/users.js";
 import { deleteObject, ownsKey } from "../storage.js";
 import { usernameSchema } from "./auth.js";
 
@@ -43,7 +43,7 @@ router.get("/users/suggested", requireAuth, async (req, res) => {
          AND NOT EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $1 AND f.followee_id = u.id)
        GROUP BY u.id
      )
-     SELECT u.username, u.display_name, u.avatar_key, u.battery, u.bio, c.shared::int AS score
+     SELECT u.username, u.display_name, u.avatar_key, u.battery, u.verified_at, u.verified_label, u.role, u.bio, c.shared::int AS score
      FROM candidates c JOIN users u ON u.id = c.id
      ORDER BY c.shared DESC, c.last_post DESC NULLS LAST, u.created_at DESC
      LIMIT 5`,
@@ -60,7 +60,7 @@ router.get("/users/lookup", async (req, res) => {
   if (!q) return res.json({ items: [] });
   const prefix = `${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
   const rows = await db.query<UserRow>(
-    `SELECT u.username, u.display_name, u.avatar_key, u.battery
+    `SELECT u.username, u.display_name, u.avatar_key, u.battery, u.verified_at, u.verified_label, u.role
      FROM users u
      WHERE u.suspended_at IS NULL AND (u.username LIKE $1 OR lower(u.display_name) LIKE $1 OR lower(u.display_name) LIKE '% ' || $1)
      ORDER BY EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $2::uuid AND f.followee_id = u.id) DESC,
@@ -103,6 +103,7 @@ router.get("/users/:username", async (req, res) => {
     suspended: !!user.suspended_at,
     isFollowing: stats!.is_following,
     followsMe: stats!.follows_me,
+    relationship: await fetchRelationship(user.id),
     // Follower counts stay private: only you can see your own.
     stats: { posts: stats!.posts, followers: isMe ? stats!.followers : null, following: isMe ? stats!.following : null },
   });
@@ -151,9 +152,9 @@ router.get("/users/:username/connections", requireAuth, async (req, res) => {
   const kind = req.query.kind === "following" ? "following" : "followers";
   const rows = await db.query<UserRow>(
     kind === "followers"
-      ? `SELECT u.username, u.display_name, u.avatar_key, u.battery, u.bio FROM follows f JOIN users u ON u.id = f.follower_id
+      ? `SELECT u.username, u.display_name, u.avatar_key, u.battery, u.verified_at, u.verified_label, u.role, u.bio FROM follows f JOIN users u ON u.id = f.follower_id
          WHERE f.followee_id = $1 ORDER BY f.created_at DESC LIMIT 200`
-      : `SELECT u.username, u.display_name, u.avatar_key, u.battery, u.bio FROM follows f JOIN users u ON u.id = f.followee_id
+      : `SELECT u.username, u.display_name, u.avatar_key, u.battery, u.verified_at, u.verified_label, u.role, u.bio FROM follows f JOIN users u ON u.id = f.followee_id
          WHERE f.follower_id = $1 ORDER BY f.created_at DESC LIMIT 200`,
     [user.id],
   );

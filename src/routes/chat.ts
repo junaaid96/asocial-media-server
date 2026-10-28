@@ -21,6 +21,9 @@ interface ConversationRow {
   display_name: string;
   avatar_key: string | null;
   battery: string;
+  verified_at: Date | null;
+  verified_label: string | null;
+  role: "user" | "admin";
   letters_from: string;
   last_seen_at: Date | null;
   suspended: boolean;
@@ -34,7 +37,7 @@ interface ConversationRow {
 
 const CONVERSATION_SELECT = `
   SELECT c.id, c.user_a, c.user_b, c.created_at, c.last_message_at,
-         o.id AS other_id, o.username, o.display_name, o.avatar_key, o.battery, o.letters_from, o.last_seen_at,
+         o.id AS other_id, o.username, o.display_name, o.avatar_key, o.battery, o.verified_at, o.verified_label, o.role, o.letters_from, o.last_seen_at,
          o.suspended_at IS NOT NULL AS suspended,
          lm.body AS last_body, lm.sender_id AS last_sender, lm.created_at AS last_created_at,
          (SELECT count(*)::int FROM messages m WHERE m.conversation_id = c.id AND m.sender_id <> $1 AND m.read_at IS NULL) AS unread,

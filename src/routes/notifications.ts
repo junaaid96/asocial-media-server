@@ -19,6 +19,9 @@ interface NotificationRow {
   display_name: string | null;
   avatar_key: string | null;
   battery: string | null;
+  verified_at: Date | null;
+  verified_label: string | null;
+  role: "user" | "admin" | null;
   post_excerpt: string | null;
   comment_excerpt: string | null;
   reaction: string | null;
@@ -29,7 +32,7 @@ router.get("/notifications", async (req, res) => {
   const me = viewer(req);
   const rows = await db.query<NotificationRow>(
     `SELECT n.id, n.type, n.post_id, n.letter_id, n.comment_id, n.created_at, n.read_at, n.body,
-            u.username, u.display_name, u.avatar_key, u.battery,
+            u.username, u.display_name, u.avatar_key, u.battery, u.verified_at, u.verified_label, u.role,
             p.body AS post_excerpt,
             c.body AS comment_excerpt,
             CASE WHEN n.type = 'comment_reaction'
@@ -54,7 +57,15 @@ router.get("/notifications", async (req, res) => {
       createdAt: row.created_at,
       read: !!row.read_at,
       actor: row.username
-        ? publicUser({ username: row.username, display_name: row.display_name!, avatar_key: row.avatar_key, battery: row.battery! })
+        ? publicUser({
+            username: row.username,
+            display_name: row.display_name!,
+            avatar_key: row.avatar_key,
+            battery: row.battery!,
+            verified_at: row.verified_at,
+            verified_label: row.verified_label,
+            role: row.role!,
+          })
         : null,
       postId: row.post_id,
       postExcerpt: row.post_excerpt ? plainExcerpt(row.post_excerpt, 100) : null,

@@ -27,6 +27,8 @@ Client: https://github.com/junaaid96/asocial-media-client · Live: https://asoci
 | Daily prompt history | Answers carry the prompt question; `?promptDate=` and `/prompts/:date` list every answer to a prompt |
 | Chat | 1:1 conversations with history, unread counts, read receipts, typing and presence delivered over Ably, with a WebSocket at `/ws` and polling as fallbacks (see below) |
 | Reports & moderation | Report a user, post or message with a preset reason; admins review a queue, hide posts and suspend accounts. Reporters hear back when their report is handled, authors are told why a post was hidden (or that it was restored), and every decision lands in an audit log (`/admin/actions`) |
+| Verified members | People request a badge, moderators approve (with an optional label like “Artist”) or reject; moderators are verified by default. The badge shows next to the name everywhere |
+| Relationship status | Solo (“Single”) shows immediately; partnered labels only appear on both profiles after the partner confirms. Either side can remove them at any time |
 | Time well spent | Clients send short heartbeats of active time; daily totals live in `usage_days`, with an optional daily limit and an optional session reminder (`sessionReminderMinutes`) |
 | Uploads | Images are compressed in the browser, checked by magic bytes, and stored in the **private** `asocial-media-uploads` bucket. They're served via `/api/files/*` redirects to presigned URLs, and the redirect is cached at the CDN |
 
@@ -57,9 +59,15 @@ GET    /conversations/:id/messages?before=|after=<messageId>   POST /conversatio
 POST   /conversations/:id/read   GET  /messages/unread
 POST   /reports {targetType: user|post|message, username|postId|messageId, reason, details}
 POST   /me/usage {day, seconds}  GET  /me/usage
+GET    /me/verification          POST /me/verification {note}   DELETE /me/verification
+GET    /me/relationship          PUT  /me/relationship/solo {label: single|null}
+POST   /me/relationship {label, partnerUsername}                DELETE /me/relationship
+POST   /me/relationship/:id/confirm                             POST /me/relationship/:id/decline
 GET    /admin/stats              GET  /admin/users?q=&status=   POST /admin/users/:id/suspend|unsuspend
 GET    /admin/posts?q=&status=   POST /admin/posts/:id/hide|unhide
 GET    /admin/reports?status=    POST /admin/reports/:id/resolve {action: none|hide_post|suspend_user} | /dismiss
+GET    /admin/verifications?status=                             POST /admin/verifications/:id/approve {label} | /reject
+POST   /admin/users/:id/verify {label}                          POST /admin/users/:id/unverify
 GET    /admin/actions            GET  /tags/lookup?q=
 POST   /uploads?kind=avatar|post (raw image body, ≤ 4 MB)       GET  /files/*key
 ```

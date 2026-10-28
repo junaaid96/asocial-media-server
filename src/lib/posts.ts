@@ -3,6 +3,7 @@ import { fileUrl } from "../storage.js";
 import { type Cursor, encodeCursor } from "./cursor.js";
 import { promptFor } from "./prompts.js";
 import { extractHashtags, extractMentions } from "./richtext.js";
+import { publicUser, type VerifiedPick } from "./users.js";
 
 export const MOODS = ["calm", "reflective", "joyful", "grateful", "tired", "anxious", "curious", "melancholy"] as const;
 export const REACTIONS = ["felt", "hug", "insight", "relate"] as const;
@@ -27,6 +28,9 @@ export interface PostRow {
   avatar_key: string | null;
   battery: string;
   show_counts: boolean;
+  verified_at: VerifiedPick["verified_at"];
+  verified_label: VerifiedPick["verified_label"];
+  role: VerifiedPick["role"];
   comment_count: number;
   my_reaction: string | null;
   bookmarked: boolean;
@@ -64,6 +68,7 @@ const postSelect = (extraColumns = "") => `
   SELECT p.id, p.author_id, p.body, p.image_key, p.mood, p.content_warning, p.is_anonymous,
          to_char(p.prompt_date, 'YYYY-MM-DD') AS prompt_date, p.visibility, p.hidden_at, p.created_at, p.edited_at,
          u.username, u.display_name, u.avatar_key, u.battery, u.show_counts,
+         u.verified_at, u.verified_label, u.role,
          (SELECT count(*)::int FROM comments c WHERE c.post_id = p.id) AS comment_count,
          (SELECT r.kind FROM reactions r WHERE r.post_id = p.id AND r.user_id = $1::uuid) AS my_reaction,
          EXISTS (SELECT 1 FROM bookmarks b WHERE b.post_id = p.id AND b.user_id = $1::uuid) AS bookmarked,
@@ -105,14 +110,7 @@ export function serializePost(row: PostRow, viewerId: string | undefined) {
     hiddenByModerators: isMine && !!row.hidden_at,
     createdAt: row.created_at,
     editedAt: row.edited_at,
-    author: hideAuthor
-      ? null
-      : {
-          username: row.username,
-          displayName: row.display_name,
-          avatarUrl: fileUrl(row.avatar_key),
-          battery: row.battery,
-        },
+    author: hideAuthor ? null : publicUser(row),
     isMine,
     myReaction: row.my_reaction,
     bookmarked: row.bookmarked,

@@ -3,7 +3,15 @@
 // hidden or restored. Following the "statement of reasons" practice used by large platforms.
 import { db } from "../db.js";
 
-export type ModerationAction = "suspend_user" | "unsuspend_user" | "hide_post" | "unhide_post" | "resolve_report" | "dismiss_report";
+export type ModerationAction =
+  | "suspend_user"
+  | "unsuspend_user"
+  | "hide_post"
+  | "unhide_post"
+  | "resolve_report"
+  | "dismiss_report"
+  | "verify_user"
+  | "unverify_user";
 
 export async function logAction(entry: {
   adminId: string;
@@ -60,6 +68,20 @@ export async function notifyReporters(reports: { reporter_id: string | null; rea
       [report.reporter_id, reportOutcomeText(outcome, report.reason)],
     );
   }
+}
+
+/** Tells someone their verification request was approved, rejected, or their badge removed. */
+export async function notifyVerification(userId: string, outcome: "approved" | "rejected" | "removed") {
+  const text =
+    outcome === "approved"
+      ? "You're verified. A badge now appears next to your name wherever you show up on aSocial."
+      : outcome === "rejected"
+        ? "We couldn't verify your account this time. You're welcome to request again later."
+        : "Your verification badge was removed. If you think this was a mistake, contact the aSocial team.";
+  await db.query(`INSERT INTO notifications (user_id, actor_id, type, body) VALUES ($1, NULL, 'verification', $2)`, [
+    userId,
+    text.slice(0, 600),
+  ]);
 }
 
 /** Tells an author their post was hidden (with the reason) or restored. */

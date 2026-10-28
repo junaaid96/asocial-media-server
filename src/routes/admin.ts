@@ -4,9 +4,9 @@ import { forgetAccountState, requireAdmin, viewer } from "../auth.js";
 import { db, one } from "../db.js";
 import { decodeCursor, encodeCursor, pageLimit } from "../lib/cursor.js";
 import { HttpError, idParam, notFound, parse } from "../lib/http.js";
-import { logAction, notifyAuthor, notifyReporters } from "../lib/moderation.js";
+import { logAction, notifyAuthor, notifyReporters, notifyVerification } from "../lib/moderation.js";
 import { plainExcerpt } from "../lib/richtext.js";
-import { publicUser } from "../lib/users.js";
+import { isVerified, publicUser } from "../lib/users.js";
 
 export const router = Router();
 router.use(requireAdmin);
@@ -28,6 +28,8 @@ router.get("/stats", async (_req, res) => {
        (SELECT count(*)::int FROM messages WHERE created_at > now() - interval '7 days') AS messages_7d,
        (SELECT count(*)::int FROM reports WHERE status = 'open') AS open_reports,
        (SELECT count(*)::int FROM reports) AS reports,
+       (SELECT count(*)::int FROM users WHERE verified_at IS NOT NULL OR role = 'admin') AS verified,
+       (SELECT count(*)::int FROM verification_requests WHERE status = 'pending') AS pending_verifications,
        (SELECT count(DISTINCT user_id)::int FROM usage_days WHERE day >= (now() - interval '1 day')::date) AS active_today,
        (SELECT count(DISTINCT user_id)::int FROM usage_days WHERE day >= (now() - interval '7 days')::date) AS active_7d`,
   );
@@ -51,8 +53,10 @@ interface AdminUserRow {
   display_name: string;
   avatar_key: string | null;
   battery: string;
+  verified_at: Date | null;
+  verified_label: string | null;
   email: string;
-  role: string;
+  role: "user" | "admin";
   created_at: Date;
   suspended_at: Date | null;
   suspended_reason: string | null;
@@ -63,7 +67,7 @@ interface AdminUserRow {
 
 const usersQuery = z.object({
   q: z.string().trim().max(100).default(""),
-  status: z.enum(["all", "suspended", "admins"]).default("all"),
+  status: z.enum(["all", "suspended", "admins", "verified"]).default("all"),
 });
 
 router.get("/users", async (req, res) => {
@@ -79,9 +83,10 @@ router.get("/users", async (req, res) => {
   }
   if (status === "suspended") where.push("u.suspended_at IS NOT NULL");
   if (status === "admins") where.push("u.role = 'admin'");
+  if (status === "verified") where.push("(u.verified_at IS NOT NULL OR u.role = 'admin')");
   if (cursor) where.push(`(u.created_at, u.id) < (${add(cursor.t)}::timestamptz, ${add(cursor.id)}::uuid)`);
   const rows = await db.query<AdminUserRow>(
-    `SELECT u.id, u.username, u.display_name, u.avatar_key, u.battery, u.email, u.role, u.created_at,
+    `SELECT u.id, u.username, u.display_name, u.avatar_key, u.battery, u.verified_at, u.verified_label, u.email, u.role, u.created_at,
             u.suspended_at, u.suspended_reason, u.last_seen_at,
             (SELECT count(*)::int FROM posts p WHERE p.author_id = u.id) AS posts,
             (SELECT count(*)::int FROM reports r WHERE r.target_user_id = u.id) AS reports_against
@@ -135,6 +140,121 @@ router.post("/users/:id/unsuspend", async (req, res) => {
   res.json({ suspended: false });
 });
 
+// --- Verification --------------------------------------------------------------
+
+interface VerificationRow {
+  id: string;
+  note: string;
+  status: string;
+  created_at: Date;
+  resolved_at: Date | null;
+  user_id: string;
+  username: string;
+  display_name: string;
+  avatar_key: string | null;
+  battery: string;
+  verified_at: Date | null;
+  verified_label: string | null;
+  role: "user" | "admin";
+  posts: number;
+  joined_at: Date;
+}
+
+router.get("/verifications", async (req, res) => {
+  const status = parse(z.enum(["pending", "approved", "rejected", "all"]).default("pending"), req.query.status);
+  const rows = await db.query<VerificationRow>(
+    `SELECT v.id, v.note, v.status, v.created_at, v.resolved_at,
+            u.id AS user_id, u.username, u.display_name, u.avatar_key, u.battery,
+            u.verified_at, u.verified_label, u.role, u.created_at AS joined_at,
+            (SELECT count(*)::int FROM posts p WHERE p.author_id = u.id) AS posts
+     FROM verification_requests v
+     JOIN users u ON u.id = v.user_id
+     ${status === "all" ? "" : "WHERE v.status = $1"}
+     ORDER BY v.created_at ${status === "pending" ? "ASC" : "DESC"} LIMIT 200`,
+    status === "all" ? [] : [status],
+  );
+  res.json({
+    items: rows.map((row) => ({
+      id: row.id,
+      note: row.note,
+      status: row.status,
+      createdAt: row.created_at,
+      resolvedAt: row.resolved_at,
+      user: { id: row.user_id, ...publicUser(row) },
+      posts: row.posts,
+      joinedAt: row.joined_at,
+    })),
+  });
+});
+
+const verifySchema = z.object({ label: z.string().trim().max(40).default("") });
+
+async function grantVerification(userId: string, adminId: string, label: string) {
+  await db.query("UPDATE users SET verified_at = coalesce(verified_at, now()), verified_label = $2 WHERE id = $1", [
+    userId,
+    label || null,
+  ]);
+  await logAction({ adminId, action: "verify_user", targetUserId: userId, note: label || null });
+  await notifyVerification(userId, "approved");
+}
+
+router.post("/verifications/:id/approve", async (req, res) => {
+  const me = viewer(req);
+  const { label } = parse(verifySchema, req.body ?? {});
+  const id = idParam(req);
+  const rows = await db.query<{ user_id: string }>(
+    `UPDATE verification_requests SET status = 'approved', resolved_by = $2, resolved_at = now()
+     WHERE id = $1 AND status = 'pending' RETURNING user_id`,
+    [id, me],
+  );
+  if (!rows.length) throw new HttpError(409, "That request was already handled");
+  await grantVerification(rows[0]!.user_id, me, label);
+  res.json({ status: "approved" });
+});
+
+router.post("/verifications/:id/reject", async (req, res) => {
+  const id = idParam(req);
+  const rows = await db.query<{ user_id: string }>(
+    `UPDATE verification_requests SET status = 'rejected', resolved_by = $2, resolved_at = now()
+     WHERE id = $1 AND status = 'pending' RETURNING user_id`,
+    [id, viewer(req)],
+  );
+  if (!rows.length) throw new HttpError(409, "That request was already handled");
+  await notifyVerification(rows[0]!.user_id, "rejected");
+  res.json({ status: "rejected" });
+});
+
+// Verify someone directly, without a request — e.g. a public figure you recognise.
+router.post("/users/:id/verify", async (req, res) => {
+  const me = viewer(req);
+  const { label } = parse(verifySchema, req.body ?? {});
+  const id = idParam(req);
+  const user = await one<{ verified_at: Date | null; role: string }>("SELECT verified_at, role FROM users WHERE id = $1", [id]);
+  if (!user) throw notFound("That person doesn't exist");
+  if (isVerified(user as { verified_at: Date | null; role: "user" | "admin" })) {
+    throw new HttpError(409, "They're already verified");
+  }
+  await db.query("UPDATE verification_requests SET status = 'approved', resolved_by = $2, resolved_at = now() WHERE user_id = $1 AND status = 'pending'", [
+    id,
+    me,
+  ]);
+  await grantVerification(id, me, label);
+  res.json({ verified: true });
+});
+
+router.post("/users/:id/unverify", async (req, res) => {
+  const id = idParam(req);
+  const user = await one<{ role: string }>("SELECT role FROM users WHERE id = $1", [id]);
+  if (!user) throw notFound("That person doesn't exist");
+  if (user.role === "admin") throw new HttpError(400, "Moderators are always verified");
+  const rows = await db.query("UPDATE users SET verified_at = NULL, verified_label = NULL WHERE id = $1 AND verified_at IS NOT NULL RETURNING 1", [id]);
+  if (rows.length) {
+    await logAction({ adminId: viewer(req), action: "unverify_user", targetUserId: id });
+    await notifyVerification(id, "removed");
+  }
+  res.json({ verified: false });
+});
+
 // --- Posts --------------------------------------------------------------------
 
 const postsQuery = z.object({
@@ -165,11 +285,14 @@ router.get("/posts", async (req, res) => {
     display_name: string;
     avatar_key: string | null;
     battery: string;
+    verified_at: Date | null;
+    verified_label: string | null;
+    role: "user" | "admin";
     author_id: string;
     open_reports: number;
   }>(
     `SELECT p.id, p.body, p.visibility, p.is_anonymous, p.created_at, p.hidden_at, p.hidden_reason, p.author_id,
-            u.username, u.display_name, u.avatar_key, u.battery,
+            u.username, u.display_name, u.avatar_key, u.battery, u.verified_at, u.verified_label, u.role,
             (SELECT count(*)::int FROM reports r WHERE r.post_id = p.id AND r.status = 'open') AS open_reports
      FROM posts p JOIN users u ON u.id = p.author_id
      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
@@ -245,10 +368,16 @@ interface ReportRow {
   reporter_display_name: string | null;
   reporter_avatar_key: string | null;
   reporter_battery: string | null;
+  reporter_verified_at: Date | null;
+  reporter_verified_label: string | null;
+  reporter_role: "user" | "admin" | null;
   target_username: string | null;
   target_display_name: string | null;
   target_avatar_key: string | null;
   target_battery: string | null;
+  target_verified_at: Date | null;
+  target_verified_label: string | null;
+  target_role: "user" | "admin" | null;
   target_suspended: boolean;
   post_hidden: boolean | null;
   post_exists: boolean;
@@ -262,7 +391,9 @@ router.get("/reports", async (req, res) => {
     `SELECT r.id, r.target_type, r.reason, r.details, r.excerpt, r.status, r.action, r.resolution_note, r.created_at, r.resolved_at,
             r.post_id, r.message_id, r.target_user_id,
             rep.username AS reporter_username, rep.display_name AS reporter_display_name, rep.avatar_key AS reporter_avatar_key, rep.battery AS reporter_battery,
+            rep.verified_at AS reporter_verified_at, rep.verified_label AS reporter_verified_label, rep.role AS reporter_role,
             t.username AS target_username, t.display_name AS target_display_name, t.avatar_key AS target_avatar_key, t.battery AS target_battery,
+            t.verified_at AS target_verified_at, t.verified_label AS target_verified_label, t.role AS target_role,
             coalesce(t.suspended_at IS NOT NULL, false) AS target_suspended,
             (SELECT p.hidden_at IS NOT NULL FROM posts p WHERE p.id = r.post_id) AS post_hidden,
             EXISTS (SELECT 1 FROM posts p WHERE p.id = r.post_id) AS post_exists,
@@ -276,8 +407,15 @@ router.get("/reports", async (req, res) => {
      ORDER BY r.created_at ${status === "open" ? "ASC" : "DESC"} LIMIT 200`,
     status === "all" ? [] : [status],
   );
-  const user = (u: string | null, d: string | null, a: string | null, b: string | null) =>
-    u ? publicUser({ username: u, display_name: d!, avatar_key: a, battery: b! }) : null;
+  const user = (
+    u: string | null,
+    d: string | null,
+    a: string | null,
+    b: string | null,
+    v: Date | null,
+    l: string | null,
+    r: "user" | "admin" | null,
+  ) => (u ? publicUser({ username: u, display_name: d!, avatar_key: a, battery: b!, verified_at: v, verified_label: l, role: r! }) : null);
   res.json({
     items: rows.map((row) => ({
       id: row.id,
@@ -291,10 +429,26 @@ router.get("/reports", async (req, res) => {
       createdAt: row.created_at,
       resolvedAt: row.resolved_at,
       resolvedBy: row.resolver_username,
-      reporter: user(row.reporter_username, row.reporter_display_name, row.reporter_avatar_key, row.reporter_battery),
+      reporter: user(
+        row.reporter_username,
+        row.reporter_display_name,
+        row.reporter_avatar_key,
+        row.reporter_battery,
+        row.reporter_verified_at,
+        row.reporter_verified_label,
+        row.reporter_role,
+      ),
       target: {
         userId: row.target_user_id,
-        user: user(row.target_username, row.target_display_name, row.target_avatar_key, row.target_battery),
+        user: user(
+          row.target_username,
+          row.target_display_name,
+          row.target_avatar_key,
+          row.target_battery,
+          row.target_verified_at,
+          row.target_verified_label,
+          row.target_role,
+        ),
         userSuspended: row.target_suspended,
         postId: row.post_exists ? row.post_id : null,
         postHidden: row.post_hidden,

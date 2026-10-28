@@ -12,6 +12,7 @@ import { router as lettersRouter } from "./routes/letters.js";
 import { router as notificationsRouter } from "./routes/notifications.js";
 import { router as postsRouter } from "./routes/posts.js";
 import { router as searchRouter } from "./routes/search.js";
+import { router as socialRouter } from "./routes/social.js";
 import { router as uploadsRouter } from "./routes/uploads.js";
 import { router as usersRouter } from "./routes/users.js";
 
@@ -52,7 +53,7 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
-app.use("/api", usersRouter, postsRouter, lettersRouter, notificationsRouter, searchRouter, uploadsRouter, chatRouter, realtimeRouter, reportsRouter);
+app.use("/api", usersRouter, postsRouter, lettersRouter, notificationsRouter, searchRouter, uploadsRouter, chatRouter, realtimeRouter, reportsRouter, socialRouter);
 
 app.use((_req, _res, next) => next(new HttpError(404, "Not found")));
 
